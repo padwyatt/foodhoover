@@ -4,7 +4,7 @@ Project to extract and visualise coverage data from food delivery services (Uber
 
 This project contains four modules
 
-**1. Loader:** 
+1. **Loader:** 
 * Prepares the static data (postcode lookup and shape files)
 * Uploads this data to BigQuery and CloudSQL
 **2. Func:**
