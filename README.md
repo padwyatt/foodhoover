@@ -17,4 +17,6 @@ This project contains four modules
 * Visualises coverage and delivery areas
 * Front end for triggering real-time scrapes
 
+Static files (postocde lookup and shapefiles) which belong inside the Loader module can be downloaded from: 
+https://storage.googleapis.com/foodhoover-static/
 

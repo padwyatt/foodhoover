@@ -1,7 +1,6 @@
 /cloud_sql/
 /useful_commands.txt
 __pycache__/
-/.gitignore
 
 /foodhoover_app/secrets.json
 /foodhoover_app/rooscrape-gbq.json
