@@ -1,0 +1,15 @@
+/cloud_sql/
+/useful_commands.txt
+__pycache__/
+
+/foodhoover_app/secrets.json
+/foodhoover_app/rooscrape-gbq.json
+/foodhoover_func/secrets.json
+/foodhoover_func/rooscrape-gbq.json
+/foodhoover_loader/secrets.json
+/foodhoover_loader/rooscrape-gbq.json
+/foodhoover_scrape/secrets.json
+/foodhoover_scrape/rooscrape-gbq.json
+
+/foodhoover_loader/boundaries/
+/foodhoover_loader/postcodes/

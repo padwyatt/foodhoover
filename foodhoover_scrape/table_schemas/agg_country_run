@@ -1,0 +1,11 @@
+CREATE TABLE public.agg_country_run
+(
+    country text COLLATE pg_catalog."default" NOT NULL,
+    run_id text COLLATE pg_catalog."default" NOT NULL,
+    scrape_time timestamp without time zone,
+    roo integer,
+    je integer,
+    fh integer,
+    ue integer,
+    CONSTRAINT agg_country_run_pk PRIMARY KEY (country, run_id)
+);

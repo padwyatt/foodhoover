@@ -1,0 +1,320 @@
+<html>
+<header>
+    <style>
+        body {
+            margin: 0;
+            height: 100%;
+            display: flex;
+            flex-flow: column;
+        }
+
+        .loading {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 100;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(192, 192, 192, 0.5);
+            background-repeat: no-repeat;
+            background-position: center;
+            line-height: calc(100vh + 150px);
+            text-align: center;
+        }
+        .loading span {
+            display: inline-block;
+            vertical-align: middle;
+            font-size: 30px;
+        }
+
+        #header{
+            display: flex;
+            flex-flow: row wrap;
+            flex: 0 1 auto;
+        }
+
+        /* Style the buttons that are used to open the tab content */
+        #header button{
+            background-color: #f1f1f1;
+            border: 1px solid #ddd;
+            padding: 14px 16px;
+            transition: 0.3s;
+            font-size: 25px;
+
+            height: 60px;
+            flex: 1 0 300px;
+            max-width: 600px;
+            font-weight: bold;
+        }
+
+        /* Change background color of buttons on hover */
+        #header button:hover {
+            background-color: #ddd;
+        }
+
+        /* Create an active/current tablink class */
+        #header button.active {
+            background-color: #ccc;
+        }
+
+        .header_form{
+            display: flex;
+            flex-flow: row wrap;
+            width: 100%;
+            border: 1px solid #ccc;
+        }
+
+        .scene{
+            display: flex;
+            flex-flow: column;
+            flex: 1 1 auto;
+        }
+ 
+        .map{
+            height: 100%;
+        }
+
+        .datepicker{
+            flex: 1 0 300px;
+            max-width: 600px;
+            margin: 15px;
+            height: 34px;
+            line-height: 22px;
+        }
+        .reportrange{
+            background: #fff; 
+            cursor: pointer; 
+            padding: 5px 10px; 
+            border: 1px solid #ccc;
+            float:left;
+            width: calc(100% - 50px);
+        }
+
+        #flash{
+            height: 34px;
+            margin-left: 15px;
+            float:left;
+        }
+        #multiselect{
+            flex: 1 0 300px;
+            padding: 15px;
+            margin-bottom: -10px;
+        }
+
+        /*Country map legend */
+        .cbox {
+            font-size: 0.75vh;
+            font-weight: bold;
+            color: #ffe680;
+            text-shadow: -1px 0 black, 0 1px black, 1px 0 black, 0 -1px black;
+            padding: 2px; 
+            box-sizing: border-box; 
+            opacity: 0.8;
+        }
+        #legend {
+            font-family: Arial, sans-serif;
+            background: #fff;
+            padding: 10px;
+            margin: 10px;
+            border: 3px solid #000;
+            border-collapse: collapse;
+            width:15%;
+            min-width: 100px;
+            max-width: 150px;
+        }
+        #legend h3 {
+            margin-top: 0;
+            font-size: clamp(10px, 2vmin, 20px);
+        }
+
+    </style>
+</header>
+
+<head>
+    <title>FoodHoover</title>
+    <meta name="viewport" content="initial-scale=1.0">
+    <meta charset="utf-8">
+
+    <!-- Google Tag Manager -->
+    <script>
+        (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+        new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+        j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+        'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+        })(window,document,'script','dataLayer','GTM-KFGPZ2W');
+    </script>
+    <!-- End Google Tag Manager -->
+
+    <link href="//code.jquery.com/ui/1.10.2/themes/smoothness/jquery-ui.css" rel="Stylesheet"></link>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/jquery/latest/jquery.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/momentjs/latest/moment.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.12.0/jquery-ui.min.js" ></script>
+    <script src="{{ url_for('static', filename= 'js/tokenize2.min.js')}}"></script>
+
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.css" />
+    <link href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="{{ url_for('static', filename= 'css/tokenize2.min.css') }}" rel="stylesheet" />
+
+    <script src="{{ url_for('static', filename= 'js/foodhoover.js') }}"></script>
+</head>
+
+<body>
+    <div id='header'>
+        <button id='country_tab' class='tab' onclick="loadTab('country')">Coverage</button>
+        <button id='resto_tab' class='tab' onclick="loadTab('resto')">Delivery Areas</button>
+    </div>
+
+    <div class='scene' id='resto_scene'>
+        <div class='header_form'>
+            <div class='datepicker'>
+                <div class="reportrange">
+                    <i class="fa fa-calendar"></i>&nbsp;
+                    <span></span> <i class="fa fa-caret-down"></i>
+                </div>
+                <img src="{{ url_for('static', filename= 'images/flash.png') }}" id='flash' alt = 'Realtime update' title="Realtime update" onclick="triggerFlash();">
+            </div>
+            <div id='multiselect'>
+                <select class="tokenize-demo" multiple>
+                    {% for place in place_details %}
+                    <option value={{place_details[place]['place_id']}} selected>{{place_details[place]['place_label']}}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div id='resto_map' class='map'></div>
+    </div>
+
+    <div class='scene' id='country_scene' style='display:none;'>
+        <div class='header_form'>
+            <div class='datepicker'>
+                <div class="reportrange" style="background: #fff; cursor: pointer; padding: 5px 10px; border: 1px solid #ccc;">
+                    <i class="fa fa-calendar"></i>&nbsp;
+                    <span></span> <i class="fa fa-caret-down"></i>
+                </div>
+            </div>
+        </div>
+        <div id='country_map' class='map'></div>
+    </div>
+
+    <div id="loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});"></div>
+    <div id="flash_loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});">
+        <span><b>Foodhoovering!</b> May take up to a minute...</span>
+    </div>
+</body>
+
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-KFGPZ2W"
+    height="0" width="0" style="display:none;visibility:hidden"></iframe>
+</noscript>
+<!-- End Google Tag Manager (noscript) -->
+
+<script>
+
+    //variables
+    var start = moment('{{start}}','YYYY-MM-DD')
+    var end = moment('{{end}}','YYYY-MM-DD')
+    var default_vendor='ROO'
+    var info_window_loading = false
+    var tab_name = '{{tab_name}}'
+
+    var vendor_data = {
+        'ROO' : {vendor_colour:'green', vendor_name : 'Deliveroo'},
+        'UE' : {vendor_colour:'grey', vendor_name : 'UberEats'},
+        'JE' : {vendor_colour:'orange', vendor_name : 'JustEat'},
+        'FH' : {vendor_colour:'red', vendor_name : 'FoodHub'},
+    }
+    rx_icon = "{{ url_for('static', filename= 'images/rx_marker.png') }}"
+    flash_icon = "{{ url_for('static', filename= 'images/flash.png') }}"
+
+    //global objects
+    var resto_map = {}
+    var country_map = {}
+    var place_details = {}
+    var layers_dict = {}
+    var geo_layer = {}
+    var bounds = {}
+    var infowindow_resto = {}
+    var infowindow_country = {}
+    var places_loaded = new Array()
+    var flashZone = {}
+    var flashMarker = {}
+    
+    //loading places from the URL (passed by Flask).
+    var place_details = JSON.parse('{{place_details | tojson}}');
+
+    function changeDate(startDate, endDate) {
+        $('.reportrange span').html(startDate.format('MMMM D, YYYY') + ' - ' + endDate.format('MMMM D, YYYY'));
+        window.start = startDate
+        window.end = endDate
+
+        updateParams('start', startDate.format('YYYY-MM-DD'), 'replace')
+        updateParams('end', endDate.format('YYYY-MM-DD'), 'replace')
+        
+        switch (tab_name){
+            case 'resto':
+                for (const [place_id, place] of Object.entries(place_details)) {
+                    placeBoundaries(place_id, resto_map, start, end)
+                }
+                break;
+            case 'country':
+                country_map = CountryData(country_map, start, end);
+                break;
+        }
+    }
+
+    $('.reportrange').daterangepicker({
+        startDate: start,
+        endDate: end,
+        ranges: {
+            'Today': [moment(), moment()],
+            'Yesterday': [moment().subtract(1, 'days'), moment().subtract(1, 'days')],
+            'Last 7 Days': [moment().subtract(6, 'days'), moment()],
+            'Last 30 Days': [moment().subtract(29, 'days'), moment()],
+            'This Month': [moment().startOf('month'), moment().endOf('month')],
+            'Last Month': [moment().subtract(1, 'month').startOf('month'), moment().subtract(1, 'month').endOf('month')]
+        }
+    }, changeDate);
+    $('.reportrange span').html(start.format('MMMM D, YYYY') + ' - ' + end.format('MMMM D, YYYY'));
+
+    $('.tokenize-demo').tokenize2({
+        placeholder: "Type a restaurant name...",
+        dropdownMaxItems: 20,
+        dataSource: function (term, object) {
+          $.ajax("{{url_for('autocomplete')}}",{
+            type: 'GET',
+            data: {
+              q: term,
+              lat: map.getCenter().lat(),
+              lng: map.getCenter().lng()
+            },
+            dataType: 'json',
+            success: function (data) {
+              var $items = [];
+              object.trigger('tokenize:dropdown:clear');
+              $.each(data.matching_results, function (k, v) {
+                  $items.push({'text':v.label,'value':v.value});
+              });
+              object.trigger('tokenize:dropdown:show');
+              object.trigger('tokenize:dropdown:fill', [$items]);
+            }
+          });
+        }
+      });
+
+    //Evnt when a token is added
+    $('.tokenize-demo').on('tokenize:tokens:added', function(e, value){ // on addition
+        added_token = $("li[data-value='" + value +"']");
+        updateParams('place_id',value,'add')
+        addPlace(value)
+    });
+
+    //Event when a token is removed
+    $('.tokenize-demo').on('tokenize:tokens:remove', function(e, value){ 
+        updateParams('place_id',value,'remove')
+        removePlace(value)
+    });
+   
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyACgjmluK5zuYhdllWvb__Nd2QQgZHOjcQ&callback=loadTab"></script>

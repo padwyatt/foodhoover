@@ -1,0 +1,15 @@
+CREATE TABLE public.rx_ref
+(
+    rx_uid text COLLATE pg_catalog."default" NOT NULL,
+    rx_slug text COLLATE pg_catalog."default",
+    vendor text COLLATE pg_catalog."default",
+    rx_name text COLLATE pg_catalog."default",
+    rx_postcode text COLLATE pg_catalog."default",
+    rx_district text COLLATE pg_catalog."default",
+    rx_sector text COLLATE pg_catalog."default",
+    rx_lat double precision,
+    rx_lng double precision,
+    rx_menu text COLLATE pg_catalog."default",
+    place_id text COLLATE pg_catalog."default",
+    CONSTRAINT rx_ref_pkey PRIMARY KEY (rx_uid)
+);

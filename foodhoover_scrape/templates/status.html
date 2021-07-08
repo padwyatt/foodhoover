@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+
+<html>
+    <head>
+        <title>FoodHoover</title>
+    </head> 
+    <body>
+        <h1>Scrape Status</h1>
+        {{run_status.to_html() | safe}}
+        <br>
+        <hr>
+        <br>
+        <h1>Reference table stats</h1>
+        {{ref_stats.to_html() | safe}}
+        <br>
+        <hr>
+        <br>
+        <h1>Country stats</h1>
+        {{country_stats.to_html() | safe}}
+    </body>
+</html>

@@ -1,0 +1,12 @@
+CREATE TABLE public.rx_cx_fast
+(
+    rx_uid text COLLATE pg_catalog."default",
+    scrape_time timestamp without time zone,
+    cx_postcode text COLLATE pg_catalog."default",
+    run_id text COLLATE pg_catalog."default"
+);
+
+CREATE INDEX idx_rx_uid
+    ON public.rx_cx_fast USING btree
+    (rx_uid COLLATE pg_catalog."default" ASC NULLS LAST)
+    TABLESPACE pg_default;

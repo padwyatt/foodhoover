@@ -1,0 +1,7 @@
+#######Issues
+
+3. Place ID merging. Slap Tickle Burgers, leeds and manchester
+4. Error handling from data pulls
+6. Multiple place hoovering ... move place id iterator inside render
+7. Set Min size for hoover box
+8. z-index for layers, to show darkest/smallest on top ??

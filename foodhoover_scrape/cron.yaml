@@ -1,0 +1,6 @@
+cron:
+- description: "scrape"
+  url: /trigger
+  schedule: every day 18:20
+  timezone: Europe/London
+  target: scrape

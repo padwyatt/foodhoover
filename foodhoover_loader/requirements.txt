@@ -1,0 +1,11 @@
+Flask==1.1.2
+pandas
+google-cloud-bigquery==2.7.0
+geojson
+geopandas
+numpy
+google-cloud-bigquery-storage[pandas,pyarrow]
+google-api-python-client
+oauth2client
+SQLAlchemy
+psycopg2
