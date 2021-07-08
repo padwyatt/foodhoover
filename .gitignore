@@ -1,6 +1,7 @@
 /cloud_sql/
 /useful_commands.txt
 __pycache__/
+/.gitignore
 
 /foodhoover_app/secrets.json
 /foodhoover_app/rooscrape-gbq.json
@@ -13,3 +14,5 @@ __pycache__/
 
 /foodhoover_loader/boundaries/
 /foodhoover_loader/postcodes/
+
+/foodhoover.code-workspace
