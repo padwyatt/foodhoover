@@ -259,7 +259,11 @@ def write_bq(results, table_name):
     return (bq_blob)
 
 def bq_get_places(run_id):
-    api_key = 'AIzaSyACgjmluK5zuYhdllWvb__Nd2QQgZHOjcQ'
+
+    f = open('secrets.json')
+    secrets = json.load(f)
+    api_key = secrets['map_key']
+
     try: 
         client = get_bq_client()
         ##query to merge rx_ref with the most recent row in places_cache (we run this twice, before and after the scrape)
