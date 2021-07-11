@@ -352,6 +352,52 @@ def bq_get_places(run_id):
         bq_step_logger(run_id, 'GET-PLACES', 'FAIL', str(e))
         return e        
 
+def bq_places_table(run_id):
+    try:
+        client = get_bq_client()
+        query_job = client.query("DELETE FROM rooscrape.foodhoover_store.places WHERE 1=1")
+        query_job.result()
+
+        sql = " \
+            INSERT INTO rooscrape.foodhoover_store.places (place_id, place_name, place_label, place_sector, place_lat, place_lng, place_location, place_vendors) \
+            (SELECT\
+                place_id,\
+                place_name.value as place_name,\
+                CONCAT(place_name.value,': ',place_sector.value, ' (',place_vendors,')') as place_label,\
+                place_sector.value as place_sector,\
+                place_lat,\
+                place_lng,\
+                ST_GEOGPOINT(place_lat, place_lng) as place_location,\
+                place_vendors,\
+            FROM (\
+                SELECT \
+                    place_id,\
+                    MIN(place_lat) as place_lat,\
+                    MIN(place_lng) as place_lng,\
+                    APPROX_TOP_COUNT(rx_name,1) as place_name,\
+                    APPROX_TOP_COUNT(rx_sector,1) as place_sector,\
+                    STRING_AGG(DISTINCT(vendor),', ') as place_vendors\
+                FROM (\
+                    SELECT *,\
+                    PERCENTILE_CONT(rx_lat, 0.5) OVER(PARTITION BY place_id) AS place_lat,\
+                    PERCENTILE_CONT(rx_lng, 0.5) OVER(PARTITION BY place_id) AS place_lng\
+                    FROM rooscrape.foodhoover_store.rx_ref)\
+                WHERE place_id IS NOT NULL \
+                GROUP by place_id),\
+            UNNEST(place_name) as place_name,\
+            UNNEST(place_sector) as place_sector)"
+
+        client = get_bq_client()
+        query_job = client.query(sql)
+        query_job.result()
+        
+        num_rows_added = query_job.num_dml_affected_rows
+        bq_step_logger(run_id, 'CREATE-PLACES', 'SUCESS', num_rows_added)
+        return num_rows_added
+    except Exception as e:
+        bq_step_logger(run_id, 'CREATE_PLACES', 'FAIL', str(e))
+        return e   
+
 def bq_agg_results_district(run_id):
     try:
         client = get_bq_client()
@@ -736,6 +782,23 @@ def bq_export_rx_ref(run_id):
         return status
     except Exception as e:
         bq_step_logger(run_id, 'EXPORT-RX-REF', 'FAIL', str(e))
+        return e
+
+def bq_export_places(run_id):
+    try:
+        bq_table = 'rooscrape.foodhoover_store.places'
+        sql_table = 'places'
+        sql_schema = ['place_id', 'place_name', 'place_label', 'place_sector', 'place_lat', 'place_lng', 'place_location','place_vendors']
+        bq_select_sql = "SELECT place_id, place_name, place_label, place_sector, place_lat, place_lng, TO_HEX(ST_ASBINARY(place_location)) as place_location, place_vendors FROM foodhoover_store.places"
+        write_mode = 'overwrite'
+        sql_create_statement = "table_schemas/places"
+
+        status = generic_exporter(run_id, bq_table, sql_table, sql_schema, bq_select_sql, sql_create_statement, write_mode)
+
+        bq_step_logger(run_id, 'EXPORT-PLACES', 'SUCESS', status)
+        return status
+    except Exception as e:
+        bq_step_logger(run_id, 'EXPORT-PLACES', 'FAIL', str(e))
         return e
         
 def bq_export_agg_sector_run(run_id):

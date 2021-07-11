@@ -1,0 +1,18 @@
+CREATE TABLE public.places
+(
+    place_id text COLLATE pg_catalog."default" NOT NULL,
+    place_name text COLLATE pg_catalog."default",
+    place_label text COLLATE pg_catalog."default",
+    place_sector text COLLATE pg_catalog."default",
+    place_lat double precision,
+    place_lng double precision,
+    place_location geometry,
+    place_vendors text COLLATE pg_catalog."default",
+    CONSTRAINT place_pkey PRIMARY KEY (place_id)
+);
+
+CREATE INDEX place_name_idx
+    ON public.places USING btree
+    (place_name COLLATE pg_catalog."default" text_pattern_ops ASC NULLS LAST)
+    INCLUDE(place_name)
+    TABLESPACE pg_default;

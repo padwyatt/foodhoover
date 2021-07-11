@@ -668,6 +668,7 @@ function placeBoundaries(place_id, map, start, end) {
 
         vendor = json['place_map'][row]['features'][0]['properties']['vendor'];
         rx_uid = json['place_map'][row]['features'][0]['properties']['rx_uid'];
+        delivery_area = json['place_map'][row]['features'][0]['properties']['delivery_area'];
 
         rx_layer = new google.maps.Data({map: map});
         rx_layer.addGeoJson(json['place_map'][row]);
@@ -677,7 +678,7 @@ function placeBoundaries(place_id, map, start, end) {
           fillOpacity: 0.5,
           strokeColor: 1,
           strokeWeight: 3,
-          zIndex: 1
+          zIndex: 1/delivery_area
         });
 
         layers_dict[rx_uid] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor }

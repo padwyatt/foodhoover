@@ -134,13 +134,14 @@ def get_delivery_boundary(start, end, place_id, run_id = None):
                 SELECT \
                     z.rx_uid, \
                     jsonb_build_object( \
-                        'type',       'Feature', \
-                        'id',         z.rx_uid, \
-                        'geometry',   ST_AsGeoJSON(ST_ForcePolygonCW(ST_BuildArea(ST_UNION(z.geometry))))::jsonb, \
+                        'type', 'Feature', \
+                        'id', z.rx_uid, \
+                        'geometry', ST_AsGeoJSON(ST_ForcePolygonCW(ST_BuildArea(ST_UNION(z.geometry))))::jsonb, \
                         'properties', to_jsonb( \
                             jsonb_build_object( \
                                 'rx_uid', z.rx_uid, \
                                 'vendor', MAX(rx_ref.vendor), \
+                                'delivery_area', ST_AREA(ST_UNION(z.geometry)),\
                                 'place_id', MAX(COALESCE(rx_ref.place_id, z.rx_uid)) \
                             ) \
                         )\
@@ -193,46 +194,73 @@ def get_delivery_boundary(start, end, place_id, run_id = None):
 
 def get_rx_names(search, lat, lng):
 
-    sql = text("SELECT q.value, q.label FROM \
-        (SELECT COALESCE(place_id, rx_uid) as value, CONCAT(MAX(rx_name),': ', MAX(rx_sector),' ', REPLACE(REPLACE(CAST(array_agg(distinct(vendor)) as TEXT),'{','('),'}',')')) as label, AVG(rx_lat) as rx_lat, AVG(rx_lng) as rx_lng FROM rx_ref \
-        WHERE UPPER(rx_name) LIKE UPPER(:s) AND COALESCE(place_id, rx_uid) IS NOT NULL \
-        GROUP BY COALESCE(place_id, rx_uid) \
-        LIMIT 200) q \
-        ORDER BY ST_Distance(ST_MakePoint("+str(lat)+","+str(lng)+"),ST_MakePoint(q.rx_lat,q.rx_lng)) ASC LIMIT 20")
+    #sql = text("SELECT q.value, q.label FROM \
+    #    (SELECT COALESCE(place_id, rx_uid) as value, CONCAT(MAX(rx_name),': ', MAX(rx_sector),' ', REPLACE(REPLACE(CAST(array_agg(distinct(vendor)) as TEXT),'{','('),'}',')')) as label, AVG(rx_lat) as rx_lat, AVG(rx_lng) as rx_lng FROM rx_ref \
+    #    WHERE UPPER(rx_name) LIKE UPPER(:s) AND COALESCE(place_id, rx_uid) IS NOT NULL \
+    #    GROUP BY COALESCE(place_id, rx_uid) \
+    #    LIMIT 200) q \
+    #    ORDER BY ST_Distance(ST_MakePoint("+str(lat)+","+str(lng)+"),ST_MakePoint(q.rx_lat,q.rx_lng)) ASC LIMIT 20")
+
+    sql = text("\
+        SELECT z.place_id as value, z.place_label as label FROM (\
+	        SELECT place_id, place_label, place_location, place_lat, place_lng from places \
+	        WHERE UPPER(place_name) LIKE UPPER(:s) \
+	        LIMIT 200) z\
+        ORDER BY ST_Distance(ST_MakePoint(:lat,:lng), z.place_location, false) ASC \
+        LIMIT 20 \
+        ")
 
     engine = get_sql_client('foodhoover_cache')
     conn = engine.connect()
-    result = conn.execute(sql, s="%"+search.replace(" ","%")+"%")
+    result = conn.execute(sql, s="%"+search.replace(" ","%")+"%", lat=lat, lng=lng)
 
     return  [{'value': r['value'],'label': r['label']} for r in result]
 
 def get_restaurant_details(place_ids):
+    #sql = text("\
+    #    SELECT \
+    #        place_id, \
+    #        MODE() WITHIN GROUP (ORDER BY rx_name) as place_name, \
+    #        CONCAT(MODE() WITHIN GROUP (ORDER BY rx_name),': ', MODE() WITHIN GROUP (ORDER BY rx_sector),' ', REPLACE(REPLACE(CAST(array_agg(distinct(vendor)) as TEXT),'{','('),'}',')')) as place_label, \
+    #        MODE() WITHIN GROUP (ORDER BY rx_lat) as place_lat, \
+    #        MODE() WITHIN GROUP (ORDER BY rx_lng) as place_lng, \
+    #        array_to_json(array_agg(restaurant)) as entities\
+    #    FROM ( \
+    #       SELECT \
+    #            COALESCE(place_id, rx_uid) as place_id, \
+    #            rx_name, \
+    #            vendor, \
+    #            rx_sector, \
+    #            ROUND(rx_lat::numeric,3) as rx_lat, \
+    #            ROUND(rx_lng::numeric,3) as rx_lng, \
+    #            jsonb_build_object('rx_uid',rx_uid,'rx_name',rx_name,'vendor',vendor) as restaurant \
+    #        FROM \
+    #        rx_ref \
+    #        WHERE (place_id IN :rx_uids) OR (rx_uid IN :rx_uids) \
+    #        )rxs \
+    #    GROUP BY place_id \
+    #    ")
+
     sql = text("\
-        SELECT \
-            place_id, \
-            MODE() WITHIN GROUP (ORDER BY rx_name) as place_name, \
-            CONCAT(MODE() WITHIN GROUP (ORDER BY rx_name),': ', MODE() WITHIN GROUP (ORDER BY rx_sector),' ', REPLACE(REPLACE(CAST(array_agg(distinct(vendor)) as TEXT),'{','('),'}',')')) as place_label, \
-            MODE() WITHIN GROUP (ORDER BY rx_lat) as place_lat, \
-            MODE() WITHIN GROUP (ORDER BY rx_lng) as place_lng, \
-            array_to_json(array_agg(restaurant)) as entities\
-        FROM ( \
-            SELECT \
-                COALESCE(place_id, rx_uid) as place_id, \
-                rx_name, \
-                vendor, \
-                rx_sector, \
-                ROUND(rx_lat::numeric,3) as rx_lat, \
-                ROUND(rx_lng::numeric,3) as rx_lng, \
-                jsonb_build_object('rx_uid',rx_uid,'rx_name',rx_name,'vendor',vendor) as restaurant \
-            FROM \
-            rx_ref \
-            WHERE (place_id IN :rx_uids) OR (rx_uid IN :rx_uids) \
-            )rxs \
-        GROUP BY place_id \
-        ")
+        SELECT\
+        places.place_id,\
+        max(place_name) as place_name,\
+        max(place_label) as place_label,\
+        max(place_lat) as place_lat,\
+        max(place_lng) as place_lng,\
+        array_to_json(\
+            array_agg(\
+                jsonb_build_object('rx_uid',rx_uid,'rx_name',rx_name,'vendor',vendor)\
+            )\
+        ) as entities\
+        FROM places\
+        LEFT JOIN rx_ref on places.place_id=rx_ref.place_id\
+        WHERE places.place_id IN :place_ids\
+        GROUP by places.place_id\
+    ")
 
     if len(place_ids)>0:
-        sql = sql.bindparams(rx_uids=tuple(place_ids))
+        sql = sql.bindparams(place_ids=tuple(place_ids))
 
         engine = get_sql_client('foodhoover_cache')
         conn = engine.connect()
