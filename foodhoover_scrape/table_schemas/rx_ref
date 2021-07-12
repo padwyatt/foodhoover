@@ -11,5 +11,6 @@ CREATE TABLE public.rx_ref
     rx_lng double precision,
     rx_menu text COLLATE pg_catalog."default",
     place_id text COLLATE pg_catalog."default",
+    hoover_place_id text COLLATE pg_catalog."default",
     CONSTRAINT rx_ref_pkey PRIMARY KEY (rx_uid)
 );

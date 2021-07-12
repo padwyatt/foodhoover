@@ -352,6 +352,43 @@ def bq_get_places(run_id):
         bq_step_logger(run_id, 'GET-PLACES', 'FAIL', str(e))
         return e        
 
+
+def bq_places_proc(run_id):
+    try:
+        sql="\
+            UPDATE rooscrape.foodhoover_store.rx_ref u\
+            SET u.hoover_place_id=v.final_place_id\
+            FROM \
+            (SELECT\
+                r.rx_uid,\
+                CASE WHEN\
+                    ST_DWITHIN(ST_GEOGPOINT(rx_lng,rx_lat),ST_GEOGPOINT(place_lng,place_lat),400)\
+                THEN\
+                    r.place_id\
+                ELSE\
+                    r.rx_uid\
+                END as final_place_id\
+            FROM rooscrape.foodhoover_store.rx_ref r\
+            LEFT JOIN (\
+                SELECT rx_uid,\
+                PERCENTILE_CONT(rx_lat, 0.5) OVER(PARTITION BY place_id) AS place_lat,\
+                PERCENTILE_CONT(rx_lng, 0.5) OVER(PARTITION BY place_id) AS place_lng\
+                FROM rooscrape.foodhoover_store.rx_ref) q\
+            ON q.rx_uid=r.rx_uid\
+            ORDER BY place_id asc) v\
+            WHERE u.rx_uid=v.rx_uid\
+        "
+        client = get_bq_client()
+        query_job = client.query(sql)
+        query_job.result()
+                
+        num_rows_added = query_job.num_dml_affected_rows
+        bq_step_logger(run_id, 'PROC-PLACES', 'SUCESS', num_rows_added)
+        return num_rows_added
+    except Exception as e:
+        bq_step_logger(run_id, 'PROC-PLACES', 'FAIL', str(e))
+        return e   
+
 def bq_places_table(run_id):
     try:
         client = get_bq_client()
@@ -361,17 +398,17 @@ def bq_places_table(run_id):
         sql = " \
             INSERT INTO rooscrape.foodhoover_store.places (place_id, place_name, place_label, place_sector, place_lat, place_lng, place_location, place_vendors) \
             (SELECT\
-                place_id,\
+                hoover_place_id as place_id,\
                 place_name.value as place_name,\
                 CONCAT(place_name.value,': ',place_sector.value, ' (',place_vendors,')') as place_label,\
                 place_sector.value as place_sector,\
                 place_lat,\
                 place_lng,\
-                ST_GEOGPOINT(place_lat, place_lng) as place_location,\
+                SAFE.ST_GEOGPOINT(place_lat, place_lng) as place_location,\
                 place_vendors,\
             FROM (\
                 SELECT \
-                    place_id,\
+                    hoover_place_id,\
                     MIN(place_lat) as place_lat,\
                     MIN(place_lng) as place_lng,\
                     APPROX_TOP_COUNT(rx_name,1) as place_name,\
@@ -379,11 +416,11 @@ def bq_places_table(run_id):
                     STRING_AGG(DISTINCT(vendor),', ') as place_vendors\
                 FROM (\
                     SELECT *,\
-                    PERCENTILE_CONT(rx_lat, 0.5) OVER(PARTITION BY place_id) AS place_lat,\
-                    PERCENTILE_CONT(rx_lng, 0.5) OVER(PARTITION BY place_id) AS place_lng\
+                    PERCENTILE_CONT(rx_lat, 0.5) OVER(PARTITION BY hoover_place_id) AS place_lat,\
+                    PERCENTILE_CONT(rx_lng, 0.5) OVER(PARTITION BY hoover_place_id) AS place_lng\
                     FROM rooscrape.foodhoover_store.rx_ref)\
-                WHERE place_id IS NOT NULL \
-                GROUP by place_id),\
+                WHERE hoover_place_id IS NOT NULL \
+                GROUP by hoover_place_id),\
             UNNEST(place_name) as place_name,\
             UNNEST(place_sector) as place_sector)"
 
@@ -395,7 +432,7 @@ def bq_places_table(run_id):
         bq_step_logger(run_id, 'CREATE-PLACES', 'SUCESS', num_rows_added)
         return num_rows_added
     except Exception as e:
-        bq_step_logger(run_id, 'CREATE_PLACES', 'FAIL', str(e))
+        bq_step_logger(run_id, 'CREATE-PLACES', 'FAIL', str(e))
         return e   
 
 def bq_agg_results_district(run_id):
@@ -771,8 +808,8 @@ def bq_export_rx_ref(run_id):
     try:
         bq_table = 'rooscrape.foodhoover_store.rx_ref'
         sql_table = 'rx_ref'
-        sql_schema = ['rx_uid','rx_slug','vendor','rx_name','rx_postcode','rx_district','rx_sector', 'rx_lat', 'rx_lng','rx_menu','place_id']
-        bq_select_sql = "SELECT rx_uid, rx_slug, vendor, rx_name, rx_postcode, rx_district, rx_sector, rx_lat, rx_lng, rx_menu, place_id FROM foodhoover_store.rx_ref"
+        sql_schema = ['rx_uid','rx_slug','vendor','rx_name','rx_postcode','rx_district','rx_sector', 'rx_lat', 'rx_lng','rx_menu','place_id','hoover_place_id']
+        bq_select_sql = "SELECT rx_uid, rx_slug, vendor, rx_name, rx_postcode, rx_district, rx_sector, rx_lat, rx_lng, rx_menu, place_id, hoover_place_id FROM foodhoover_store.rx_ref"
         write_mode = 'overwrite'
         sql_create_statement = "table_schemas/rx_ref"
 
