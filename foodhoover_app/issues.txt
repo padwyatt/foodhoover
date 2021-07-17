@@ -1,12 +1,7 @@
 #######Issues
 
-3. Place ID merging. <= Fixed!
 4. Error handling from data pulls
 6. Multiple place hoovering ... move place id iterator inside render
 7. Set Min size for hoover box
+8. Redo infowindow on country map
 
-###Next steps
-
-##fix place ID overmerging (Apply Dwithin 1000m to the pairs) <= Fixed!
-##Add the population estimates
-##Add area and population metadata to the Rx hover box

@@ -531,9 +531,27 @@ function placeBoundaries(place_id, map, start, end) {
 
     function createInfoWindow(map, event, infowindow){
       var name = event.feature.getProperty('postcode_sector');
-      var contentString = '<div id="content"><div id="siteNotice"></div>'+
-        '<h3 id="firstHeading" class="firstHeading">' + name + '</h3>'+
-        '</div>';
+      var population = event.feature.getProperty('population');
+
+      contentString = document.createElement("div");
+      table = document.createElement("table");
+      table.classList.add('GeoPopCoverage')
+      table_row = document.createElement("tr")
+      table_cell = document.createElement("th")
+      table_cell.innerHTML = name
+      table_cell.colSpan = 2
+      table_row.appendChild(table_cell)
+      table.appendChild(table_row)
+      table_row = document.createElement("tr")
+      table_cell = document.createElement("td")
+      table_cell.innerHTML = 'Population'
+      table_row.appendChild(table_cell)
+      table_cell = document.createElement("td")
+      table_cell.innerHTML = population.toLocaleString()
+      table_row.appendChild(table_cell)
+      table.appendChild(table_row)
+      contentString.appendChild(table)
+
       var info_bounds = new google.maps.LatLngBounds();
       var geometry = event.feature.getGeometry();
     
@@ -578,7 +596,7 @@ function placeBoundaries(place_id, map, start, end) {
         fillOpacity: 0,
         strokeColor: 'gray',
         strokeWeight: 0.5,
-        zIndex: 10
+        zIndex: 1000
       });
     });
   
@@ -669,6 +687,7 @@ function placeBoundaries(place_id, map, start, end) {
         vendor = json['place_map'][row]['features'][0]['properties']['vendor'];
         rx_uid = json['place_map'][row]['features'][0]['properties']['rx_uid'];
         delivery_area = json['place_map'][row]['features'][0]['properties']['delivery_area'];
+        delivery_population = json['place_map'][row]['features'][0]['properties']['delivery_population'];
 
         rx_layer = new google.maps.Data({map: map});
         rx_layer.addGeoJson(json['place_map'][row]);
@@ -681,7 +700,7 @@ function placeBoundaries(place_id, map, start, end) {
           zIndex: 1/delivery_area
         });
 
-        layers_dict[rx_uid] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor }
+        layers_dict[rx_uid] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor, 'delivery_area':delivery_area, 'delivery_population': delivery_population}
     }
 
     //add a place marker
@@ -694,7 +713,9 @@ function placeBoundaries(place_id, map, start, end) {
 
     marker_latlng = new google.maps.LatLng(json['place_details'][place_id]['place_lat'], json['place_details'][place_id]['place_lng'])
     place_marker = new google.maps.Marker({
+      place_id: place_id,
       position: marker_latlng,
+      zIndex: 2000,
       label: {
         text: label_text,
         color: 'black',
@@ -709,6 +730,47 @@ function placeBoundaries(place_id, map, start, end) {
       }
     });
     place_details[place_id]['place_marker'] = place_marker
+
+    //add the click infowindow
+    google.maps.event.addListener(place_marker, 'click', function() {
+      contentString = document.createElement("div");
+      table = document.createElement("table");
+      table.classList.add('PlacePopCoverage')
+      table_row = document.createElement("tr")
+      table_cell = document.createElement("th")
+      table_cell.innerHTML = 'Population Coverage'
+      table_cell.colSpan = 2
+      table_row.appendChild(table_cell)
+      table.appendChild(table_row)
+      
+      for (layer in layers_dict){
+        if (layers_dict[layer]['place_id']==this.place_id){
+            table_row = document.createElement("tr")
+            table_cell = document.createElement("td")
+            table_cell.innerHTML = vendor_data[layers_dict[layer]['vendor']]['vendor_name']
+            table_row.appendChild(table_cell)
+            table_cell = document.createElement("td")
+            table_cell.innerHTML = layers_dict[layer]['delivery_population'].toLocaleString()
+            table_row.style.color = vendor_data[layers_dict[layer]['vendor']]['vendor_colour']
+            table_row.appendChild(table_cell)
+            table.appendChild(table_row)
+        }
+      }
+      contentString.appendChild(table)
+      if (infowindow_resto) {
+        infowindow_resto.close();
+      }
+
+      infowindow_resto = new google.maps.InfoWindow({
+        content: contentString,
+      });
+      infowindow_resto.open({
+        anchor: this,
+        map,
+        shouldFocus: false,
+      });
+
+    })
 
     //trigger the geolayer and the map key only when all are loaded
     places_to_load = Object.keys(place_details)

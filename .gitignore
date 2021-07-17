@@ -13,5 +13,6 @@ __pycache__/
 
 /foodhoover_loader/boundaries/
 /foodhoover_loader/postcodes/
+/foodhoover_loader/metadata/
 
 /foodhoover.code-workspace

@@ -25,8 +25,15 @@ def load_postcodes():
     postcode_lookup.rename(columns={'postcode_no_space': 'postcode'}, inplace=True)
 
     ##add a geometry which describes the center of each postcode
-    postcode_lookup['postcode_point'] = np.where((~np.isnan(postcode_lookup['longitude']) & ~np.isnan(postcode_lookup['latitude'])), gpd.points_from_xy(postcode_lookup['longitude'],postcode_lookup['latitude']).astype('str'),None)
+    postcode_lookup['postcode_point'] = np.where((~np.isnan(postcode_lookup['longitude']) & ~np.isnan(postcode_lookup['latitude'])), gpd.points_from_xy(postcode_lookup['longitude'],postcode_lookup['latitude']),None)
+    postcode_lookup['postcode_point'] = None
     
+    ##load the postcodes metadata
+    metadata = pd.read_csv('metadata/postcodes_data.csv',on_bad_lines='warn', usecols=[0,8])
+    metadata['postcode'] = metadata['PCD'].str.replace(' ','')
+
+    postcode_lookup = postcode_lookup.merge(metadata[['postcode','Total_Persons']], on='postcode', how='left')
+
     ##send to bigquery
     client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
 
@@ -40,6 +47,11 @@ def load_postcodes():
     job = client.load_table_from_dataframe(
         postcode_lookup, table_id, job_config=job_config
     )
+    job.result()
+
+    ###update the add a centre point to each sector
+    sql = "UPDATE "+table_id+ " SET postcode_point = ST_GEOGPOINT(longitude, latitude) where longitude is not null and latitude is not null"
+    job = client.query(sql)
     job.result()
 
     table = client.get_table(table_id)  # Make an API request.
@@ -127,6 +139,18 @@ def sector_manipulations():
     job = client.query(sql)
     job.result()
 
+    ###add the population to each sector
+    sql = "UPDATE `rooscrape.foodhoover_store.sectors` a \
+        SET a.population = CAST(b.population as INT64) \
+        FROM \
+            (SELECT postcode_sector, sum(Total_Persons) as population from  \
+            `rooscrape.foodhoover_store.postcode_lookup` \
+            GROUP BY postcode_sector) b\
+        WHERE a.sector = b.postcode_sector\
+    "
+    job = client.query(sql)
+    job.result()
+
     return "Done sector manipulations"
 
 def load_districts():
@@ -183,6 +207,18 @@ def district_manipulations():
 
     ###update the add a centre point to each sector
     sql = "UPDATE "+table_id+ " SET district_centre = ST_CENTROID(geometry) where geometry is not null "
+    job = client.query(sql)
+    job.result()
+
+    ###add the population to each district
+    sql = "UPDATE `rooscrape.foodhoover_store.districts` a \
+        SET a.population = CAST(b.population as INT64) \
+        FROM \
+            (SELECT postcode_district, sum(Total_Persons) as population from  \
+            `rooscrape.foodhoover_store.postcode_lookup` \
+            GROUP BY postcode_district) b \
+        WHERE a.district = b.postcode_district\
+    "
     job = client.query(sql)
     job.result()
 
@@ -272,30 +308,30 @@ def import_sql(file_path, columns, table_name, write_mode):
 
 def export_sectors():
     try:
-        sql = "SELECT sector,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(sector_centre)) as sector_centre, closest_postcode FROM foodhoover_store.sectors"
+        sql = "SELECT sector,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(sector_centre)) as sector_centre, closest_postcode, population FROM foodhoover_store.sectors"
         gcs_filename = 'sectors.gzip'
         file_path =  bq_to_gcs(sql, gcs_filename)
-        status = import_sql(file_path, ['sector','geometry','sector_centre','closest_postcode'], "sectors",'overwrite')
+        status = import_sql(file_path, ['sector','geometry','sector_centre','closest_postcode','population'], "sectors",'overwrite')
         return "Sectors exported"
     except Exception as e:
         return e
 
 def export_districts():
     try:
-        sql = "SELECT district,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(district_centre)) as district_centre FROM foodhoover_store.districts"
+        sql = "SELECT district,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(district_centre)) as district_centre, population FROM foodhoover_store.districts"
         gcs_filename = 'districts.gzip'
         file_path =  bq_to_gcs(sql, gcs_filename)
-        status = import_sql(file_path, ['district','geometry','district_centre'], "districts",'overwrite')
+        status = import_sql(file_path, ['district','geometry','district_centre','population'], "districts",'overwrite')
         return "Districts exported"
     except Exception as e:
         return e
 
 def export_postcodes():
     try:
-        sql = "SELECT postcode, status, country, latitude, longitude, postcode_area, postcode_district, postcode_sector, TO_HEX(ST_ASBINARY(postcode_point)) as postcode_point FROM foodhoover_store.postcode_lookup"
+        sql = "SELECT postcode, status, country, latitude, longitude, postcode_area, postcode_district, postcode_sector, TO_HEX(ST_ASBINARY(postcode_point)) as postcode_point, Total_Persons FROM foodhoover_store.postcode_lookup"
         gcs_filename = 'postcode_lookup.gzip'
         file_path =  bq_to_gcs(sql, gcs_filename)
-        status = import_sql(file_path, ['postcode', 'status', 'country', 'latitude', 'longitude', 'postcode_area', 'postcode_district', 'postcode_sector','postcode_point'], "postcode_lookup",'overwrite')
+        status = import_sql(file_path, ['postcode', 'status', 'country', 'latitude', 'longitude', 'postcode_area', 'postcode_district', 'postcode_sector','postcode_point','Total_Persons'], "postcode_lookup",'overwrite')
         return "Postcodes exported"
     except Exception as e:
         return e

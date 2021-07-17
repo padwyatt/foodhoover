@@ -4,7 +4,6 @@ from connections import get_sql_client
 import asyncio
 from aiohttp import ClientSession
 import uuid
-import json
 
 def get_country_data(start, end, lngw, lats, lnge, lngn, zoom):
     if zoom<11:
@@ -100,7 +99,8 @@ def get_geo_objects(lngw, lats, lnge, lngn):
                             'geometry',   ST_AsGeoJSON(ST_ForcePolygonCW(ST_CollectionExtract(geometry,3)))::jsonb, \
                             'properties', to_jsonb( \
                                 jsonb_build_object( \
-                                    'postcode_sector', sector \
+                                    'postcode_sector', sector, \
+                                    'population', population \
                                 ) \
                             ) \
                         ) as feature \
@@ -141,7 +141,8 @@ def get_delivery_boundary(start, end, place_id, run_id = None):
                             jsonb_build_object( \
                                 'rx_uid', z.rx_uid, \
                                 'vendor', MAX(rx_ref.vendor), \
-                                'delivery_area', ST_AREA(ST_UNION(z.geometry)),\
+                                'delivery_area',  ST_AREA(ST_TRANSFORM(ST_UNION(z.geometry), 31467))/1000000,\
+                                'delivery_population', SUM(population), \
                                 'place_id', MAX(COALESCE(rx_ref.place_id, z.rx_uid)) \
                             ) \
                         )\
@@ -150,6 +151,7 @@ def get_delivery_boundary(start, end, place_id, run_id = None):
                     SELECT \
                     postcode_sector, \
                     rx_uid, \
+                    MAX(sectors.population) as population, \
                     ST_MakeValid(MAX(geometry)) AS geometry \
                     FROM \
                     "+target_table+" rx_cx_fast \
@@ -194,13 +196,6 @@ def get_delivery_boundary(start, end, place_id, run_id = None):
 
 def get_rx_names(search, lat, lng):
 
-    #sql = text("SELECT q.value, q.label FROM \
-    #    (SELECT COALESCE(place_id, rx_uid) as value, CONCAT(MAX(rx_name),': ', MAX(rx_sector),' ', REPLACE(REPLACE(CAST(array_agg(distinct(vendor)) as TEXT),'{','('),'}',')')) as label, AVG(rx_lat) as rx_lat, AVG(rx_lng) as rx_lng FROM rx_ref \
-    #    WHERE UPPER(rx_name) LIKE UPPER(:s) AND COALESCE(place_id, rx_uid) IS NOT NULL \
-    #    GROUP BY COALESCE(place_id, rx_uid) \
-    #    LIMIT 200) q \
-    #    ORDER BY ST_Distance(ST_MakePoint("+str(lat)+","+str(lng)+"),ST_MakePoint(q.rx_lat,q.rx_lng)) ASC LIMIT 20")
-
     sql = text("\
         SELECT z.place_id as value, z.place_label as label FROM (\
 	        SELECT place_id, place_label, place_location, place_lat, place_lng from places \
@@ -217,29 +212,6 @@ def get_rx_names(search, lat, lng):
     return  [{'value': r['value'],'label': r['label']} for r in result]
 
 def get_restaurant_details(place_ids):
-    #sql = text("\
-    #    SELECT \
-    #        place_id, \
-    #        MODE() WITHIN GROUP (ORDER BY rx_name) as place_name, \
-    #        CONCAT(MODE() WITHIN GROUP (ORDER BY rx_name),': ', MODE() WITHIN GROUP (ORDER BY rx_sector),' ', REPLACE(REPLACE(CAST(array_agg(distinct(vendor)) as TEXT),'{','('),'}',')')) as place_label, \
-    #        MODE() WITHIN GROUP (ORDER BY rx_lat) as place_lat, \
-    #        MODE() WITHIN GROUP (ORDER BY rx_lng) as place_lng, \
-    #        array_to_json(array_agg(restaurant)) as entities\
-    #    FROM ( \
-    #       SELECT \
-    #            COALESCE(place_id, rx_uid) as place_id, \
-    #            rx_name, \
-    #            vendor, \
-    #            rx_sector, \
-    #            ROUND(rx_lat::numeric,3) as rx_lat, \
-    #            ROUND(rx_lng::numeric,3) as rx_lng, \
-    #            jsonb_build_object('rx_uid',rx_uid,'rx_name',rx_name,'vendor',vendor) as restaurant \
-    #        FROM \
-    #        rx_ref \
-    #        WHERE (place_id IN :rx_uids) OR (rx_uid IN :rx_uids) \
-    #        )rxs \
-    #    GROUP BY place_id \
-    #    ")
 
     sql = text("\
         SELECT\
