@@ -5,3 +5,5 @@
 7. Set Min size for hoover box
 8. Redo infowindow on country map
 
+9. add last updated
+10. add info page

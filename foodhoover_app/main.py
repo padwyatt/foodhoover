@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from datetime import datetime, timedelta
-from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_flash, count_flash
+from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_flash, count_flash, get_last_update
 import json
 
 app = Flask(__name__)
@@ -35,7 +35,8 @@ def index():
 
     place_ids = request.args.getlist('place_id')
     place_details = get_restaurant_details(place_ids)
-    return render_template('index.html', place_details=place_details, tab_name = tab_name, start=start, end=end, map_secret=map_secret)
+    updated_time = get_last_update()
+    return render_template('index.html', place_details=place_details, tab_name = tab_name, start=start, end=end, map_secret=map_secret, updated_time=updated_time)
 
 @app.route('/country.json')
 def country_data():

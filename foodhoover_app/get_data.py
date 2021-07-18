@@ -252,6 +252,14 @@ def get_restaurant_details(place_ids):
 
     return data
 
+def get_last_update():
+    sql = "select max(scrape_time) as updated_time from agg_country_run"
+    engine = get_sql_client('foodhoover_cache')
+    conn = engine.connect()
+    result = conn.execute(sql)
+    updated_time = result.fetchone()['updated_time']
+    return updated_time
+
 def count_flash(lngw, lats, lnge, lngn):
     sql = text(
         "SELECT count(1) as sector_count FROM sectors \
