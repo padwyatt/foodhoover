@@ -1,11 +1,18 @@
+from google.cloud.bigquery import client
 import sqlalchemy
 from sqlalchemy.sql import text
 import os
+
+from google.cloud import bigquery
+from google.cloud import bigquery_storage
+
+from googleapiclient import discovery
+from oauth2client.client import GoogleCredentials
+
 import json
 
 def get_sql_client(database_name):
-
-
+    
     f = open('secrets.json')
     secrets = json.load(f)
     print(secrets)
@@ -52,3 +59,23 @@ def get_sql_client(database_name):
     pool.dialect.description_encoding = None
 
     return pool
+
+def get_bq_client():
+    
+    client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
+
+    return client
+
+def get_bq_storage():
+    
+    bqstorageclient = bigquery_storage.BigQueryReadClient.from_service_account_json('rooscrape-gbq.json')
+
+    return bqstorageclient
+
+def get_api_client():
+
+    credentials = GoogleCredentials.from_stream('rooscrape-gbq.json')
+    service = discovery.build('sqladmin', 'v1beta4', credentials=credentials)
+
+    return service
+

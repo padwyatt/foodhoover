@@ -315,7 +315,7 @@ function addPlace(place_id){
     //add to place_details list
     place = {place_id:place_id}
     place_details[place_id] = place
-    placeBoundaries(place_id, map, start, end)
+    placeBoundaries([place_id], map, start, end)
 }
 
 
@@ -352,12 +352,12 @@ function loadTab(tab=tab_name) {
   }
   document.getElementById(tab+"_tab").className += " active";
 
+  var url = new URL(window.location);
   //load the maps and display the elements
   console.log(tab)
   switch (tab) {
       case 'resto':
-          tab_name = 'resto'
-          updateParams('tab', tab_name, 'replace')
+          url.searchParams.delete('chain');
           resto_map = initMap('resto_map')    
           bounds = new google.maps.LatLngBounds()
           geo_layer = new google.maps.Data({map: resto_map});
@@ -365,16 +365,16 @@ function loadTab(tab=tab_name) {
 
           $('.scene').hide()
           $('#resto_scene').show()
-          for (const [place_id, place] of Object.entries(place_details)) {
-              placeBoundaries(place_id, resto_map, start, end)
+
+          place_ids = Object.keys(place_details)
+          if (place_ids.length !== 0){
+            placeBoundaries(place_ids, resto_map, start, end)
           }
+
           break;
       case 'country':
-          tab_name = 'country'
-          updateParams('tab', tab_name, 'replace')
-          //remove any place_ids
-          const url = new URL(window.location);
           url.searchParams.delete('place_id');
+          url.searchParams.delete('chain');
           window.history.pushState({}, '', url);
 
           infowindow_country = new google.maps.InfoWindow();
@@ -384,6 +384,47 @@ function loadTab(tab=tab_name) {
           $('#country_scene').show()
           country_map = countryMap(start, end);
           break;
+      case 'chains':
+          url.searchParams.delete('place_id');
+          chains_map = initMap('chains_map')    
+          bounds = new google.maps.LatLngBounds()
+          infowindow_chains = new google.maps.InfoWindow();
+          infowindow_chains_place = new google.maps.InfoWindow();
+
+          $('.scene').hide()
+          $('#chains_scene').show()
+          console.log(chain)
+
+          chains_map.addListener('zoom_changed',function (event) {
+            var timer;
+            return function() {
+                console.log('changezoom')
+                clearTimeout(timer);
+                timer = setTimeout(function() {
+                  if (chain !== 'None'){
+                    loadChainMarkers();
+                  }
+                }, 500);
+            }
+          }());
+
+          chains_map.addListener('bounds_changed',function (event) {
+            var timer;
+            return function() {
+                clearTimeout(timer);
+                timer = setTimeout(function() {
+                  if (chain !== 'None'){
+                    loadChainMarkers();
+                  }
+                }, 500);
+            }
+          }());
+          
+          if (chain !== 'None'){
+            loadChains(chain, start, end)
+          }
+          break;
+
   }
 }
 
@@ -522,7 +563,7 @@ function restoFlash(){
   });
 }
 
-function placeBoundaries(place_id, map, start, end) {
+function placeBoundaries(place_ids, map, start, end) {
 
   //ensure the datepicker shows the correct date (after a flash)
   $('.reportrange span').html(start.format('MMMM D, YYYY') + ' - ' + end.format('MMMM D, YYYY'));
@@ -662,114 +703,125 @@ function placeBoundaries(place_id, map, start, end) {
   }
 
   this.render_places = function(json){
+    
+    window.fluff = json
 
-    place_id = Object.keys(json['place_details'])[0]
+    place_ids = Object.keys(json)
 
-    //remove any existing markers
-    if (place_details[place_id]['place_marker'] !== undefined){
-      place_details[place_id]['place_marker'].setMap(null)
-    }
+    place_ids.forEach(function (place_id, index) {
 
-    //update the place details
-    places_loaded.push(place_id)
-    place_details[place_id] = json['place_details'][place_id]
-
-    //remove any existing layers for this place_id
-    for (layer in layers_dict){
-      if (layers_dict[layer]['place_id']==place_id){
-        layers_dict[layer]['layer'].setMap(null)
-        delete layers_dict[layer]
-      }
-    }
-
-    for (row in json['place_map']){
-
-        vendor = json['place_map'][row]['features'][0]['properties']['vendor'];
-        rx_uid = json['place_map'][row]['features'][0]['properties']['rx_uid'];
-        delivery_area = json['place_map'][row]['features'][0]['properties']['delivery_area'];
-        delivery_population = json['place_map'][row]['features'][0]['properties']['delivery_population'];
-
-        rx_layer = new google.maps.Data({map: map});
-        rx_layer.addGeoJson(json['place_map'][row]);
-
-        rx_layer.setStyle({
-          fillColor: vendor_data[vendor]['vendor_colour'],
-          fillOpacity: 0.5,
-          strokeColor: 1,
-          strokeWeight: 3,
-          zIndex: 1/delivery_area
-        });
-
-        layers_dict[rx_uid] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor, 'delivery_area':delivery_area, 'delivery_population': delivery_population}
-    }
-
-    //add a place marker
-    if (Object.values(layers_dict).map(({place_id})=>place_id).includes(place_id)){
-      label_text = json['place_details'][place_id]['place_name']
-    } 
-    else{
-      label_text = json['place_details'][place_id]['place_name'] + ' (No Data)'
-    }
-
-    marker_latlng = new google.maps.LatLng(json['place_details'][place_id]['place_lat'], json['place_details'][place_id]['place_lng'])
-    place_marker = new google.maps.Marker({
-      place_id: place_id,
-      position: marker_latlng,
-      zIndex: 2000,
-      label: {
-        text: label_text,
-        color: 'black',
-        fontSize: '15px',
-        fontWeight: 'bold',
-        width: '60px'
-      },
-      map: map,
-      icon: {
-        url: rx_icon,
-        labelOrigin: new google.maps.Point(25, 50),
-      }
-    });
-    place_details[place_id]['place_marker'] = place_marker
-
-    //add the click infowindow
-    google.maps.event.addListener(place_marker, 'click', function() {
-      contentString = document.createElement("div");
-      table = document.createElement("table");
-      table.classList.add('PlacePopCoverage')
-      table_row = document.createElement("tr")
-      table_cell = document.createElement("th")
-      table_cell.innerHTML = 'Population Coverage'
-      table_cell.colSpan = 2
-      table_row.appendChild(table_cell)
-      table.appendChild(table_row)
-      
-      for (layer in layers_dict){
-        if (layers_dict[layer]['place_id']==this.place_id){
-            table_row = document.createElement("tr")
-            table_cell = document.createElement("td")
-            table_cell.innerHTML = vendor_data[layers_dict[layer]['vendor']]['vendor_name']
-            table_row.appendChild(table_cell)
-            table_cell = document.createElement("td")
-            table_cell.innerHTML = layers_dict[layer]['delivery_population'].toLocaleString()
-            table_row.style.color = vendor_data[layers_dict[layer]['vendor']]['vendor_colour']
-            table_row.appendChild(table_cell)
-            table.appendChild(table_row)
+      console.log(place_id)
+  
+      //remove any existing markers
+      if (place_details[place_id] !== undefined){
+        if (place_details[place_id]['place_marker'] !== undefined){
+          place_details[place_id]['place_marker'].setMap(null)
         }
       }
-      contentString.appendChild(table)
-      if (infowindow_resto) {
-        infowindow_resto.close();
+
+      //update the place details
+      places_loaded.push(place_id)
+      place_details[place_id] = json[place_id]['place_details']
+
+      //remove any existing layers for this place_id
+      for (layer in layers_dict){
+        if (layers_dict[layer]['place_id']==place_id){
+          layers_dict[layer]['layer'].setMap(null)
+          delete layers_dict[layer]
+        }
       }
 
-      infowindow_resto = new google.maps.InfoWindow({
-        content: contentString,
-      });
-      infowindow_resto.open({
-        anchor: this,
-        map,
-        shouldFocus: false,
-      });
+      for (row in json[place_id]['place_map']['features']){
+        if (json[place_id]['place_map']['features'][row]['geometry'] !== null){
+          vendor = json[place_id]['place_map']['features'][[row]]['properties']['vendor'];
+          rx_uid = json[place_id]['place_map']['features'][[row]]['properties']['rx_uid'];
+          delivery_area = json[place_id]['place_map']['features'][[row]]['properties']['delivery_area'];
+          delivery_population = json[place_id]['place_map']['features'][[row]]['properties']['delivery_population'];
 
+          rx_layer = new google.maps.Data({map: map});
+          rx_layer.addGeoJson(json[place_id]['place_map']['features'][row]);
+
+          rx_layer.setStyle({
+            fillColor: vendor_data[vendor]['vendor_colour'],
+            fillOpacity: 0.5,
+            strokeColor: 1,
+            strokeWeight: 3,
+            zIndex: 1/delivery_area
+          });
+
+          layers_dict[rx_uid] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor, 'delivery_area':delivery_area, 'delivery_population': delivery_population}
+        }
+      }
+
+      //add a place marker
+      if (Object.values(layers_dict).map(({place_id})=>place_id).includes(place_id)){
+        label_text = json[place_id]['place_details']['place_name']
+      } 
+      else{
+        label_text = json[place_id]['place_details']['place_name'] + ' (No Data)'
+      }
+
+      console.log(label_text)
+
+      marker_latlng = new google.maps.LatLng(json[place_id]['place_details']['place_lat'], json[place_id]['place_details']['place_lng'])
+      place_marker = new google.maps.Marker({
+        place_id: place_id,
+        position: marker_latlng,
+        zIndex: 2000,
+        label: {
+          text: label_text,
+          color: 'black',
+          fontSize: '15px',
+          fontWeight: 'bold',
+          width: '60px'
+        },
+        map: map,
+        icon: {
+          url: rx_icon,
+          labelOrigin: new google.maps.Point(25, 50),
+        }
+      });
+      place_details[place_id]['place_marker'] = place_marker
+
+      //add the click infowindow
+      google.maps.event.addListener(place_marker, 'click', function() {
+        contentString = document.createElement("div");
+        table = document.createElement("table");
+        table.classList.add('PlacePopCoverage')
+        table_row = document.createElement("tr")
+        table_cell = document.createElement("th")
+        table_cell.innerHTML = 'Population Coverage'
+        table_cell.colSpan = 2
+        table_row.appendChild(table_cell)
+        table.appendChild(table_row)
+        
+        for (layer in layers_dict){
+          if (layers_dict[layer]['place_id']==this.place_id){
+              table_row = document.createElement("tr")
+              table_cell = document.createElement("td")
+              table_cell.innerHTML = vendor_data[layers_dict[layer]['vendor']]['vendor_name']
+              table_row.appendChild(table_cell)
+              table_cell = document.createElement("td")
+              table_cell.innerHTML = layers_dict[layer]['delivery_population'].toLocaleString()
+              table_row.style.color = vendor_data[layers_dict[layer]['vendor']]['vendor_colour']
+              table_row.appendChild(table_cell)
+              table.appendChild(table_row)
+          }
+        }
+        contentString.appendChild(table)
+        if (infowindow_resto) {
+          infowindow_resto.close();
+        }
+
+        infowindow_resto = new google.maps.InfoWindow({
+          content: contentString,
+        });
+        infowindow_resto.open({
+          anchor: this,
+          map,
+          shouldFocus: false,
+        });
+      })
     })
 
     //trigger the geolayer and the map key only when all are loaded
@@ -799,16 +851,16 @@ function placeBoundaries(place_id, map, start, end) {
   }
 
   setVisible('#loading', true);
-
-  $.getJSON('deliveryboundary.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+"&place_id="+place_id, function (json) {
-    try{
-      render_places(json)
-      setVisible('#loading', false);
-    }
-    catch(err){
-      alert(err)
-      setVisible('#loading', false);
-    }
+  
+  $.getJSON('deliveryboundary.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+"&place_id="+place_ids.join("&place_id="), function (json) {
+    //try{
+    render_places(json)
+    setVisible('#loading', false);
+    //}
+    //catch(err){
+    //  alert(err)
+    //  setVisible('#loading', false);
+    //}
   });   
   return 'done'
 }
@@ -1008,4 +1060,270 @@ function countryMap(start, end){
   map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(legend);
 
   return map
+}
+
+////CHAINS TAB
+
+function setChains(){
+  chain = $('#chains_name').val();
+
+  zoom = chains_map.getZoom()
+  bounds =  chains_map.getBounds()
+  var ne = bounds.getNorthEast();
+  var sw = bounds.getSouthWest();
+  var lngw = sw.lng()
+  var lats = sw.lat()
+  var lnge = ne.lng()
+  var latn = ne.lat()
+
+  updateParams('chain', chain, 'replace')
+  loadChains(chain, start, end)
+
+  if (chains_map.getZoom()>10){
+    loadChainMarkers(chain, lngw, lats, lnge, latn)
+  }
+  
+}
+
+//get markers
+function createChainMarker(place){
+  marker_latlng = new google.maps.LatLng(place['place_lat'], place['place_lng'])
+  chains_marker = new google.maps.Marker({
+    place_name: place['place_name'],
+    place_id: place['place_id'],
+    position: marker_latlng,
+    map: chains_map,
+    icon: {
+      url: rx_icon,
+      scaledSize: new google.maps.Size(25, 17)
+    }
+  });
+
+  google.maps.event.addListener(chains_marker, 'click', function() {
+    contentString = document.createElement("div");
+    table = document.createElement("table");
+    table.classList.add('PlacePopCoverage')
+    table_row = document.createElement("tr")
+    table_cell = document.createElement("th")
+    table_cell.innerHTML = this.place_name
+    table_cell.colSpan = 2
+    table_row.appendChild(table_cell)
+    table.appendChild(table_row)
+
+    contentString.appendChild(table)
+    if (infowindow_chains_place) {
+      infowindow_chains_place.close();
+    }
+    if (infowindow_chains) {
+      infowindow_chains.close();
+    }
+
+    infowindow_chains_place = new google.maps.InfoWindow({
+      content: contentString,
+    });
+    infowindow_chains_place.open({
+      anchor: this,
+      map,
+      shouldFocus: false,
+    });
+  })
+
+
+  return chains_marker
+}
+
+function loadChainMarkers(){
+
+  var chain = $('#chains_name').val();
+ 
+  if ((chains_map.getZoom()>=9) & (chain !== '')){
+    bounds =  chains_map.getBounds()
+    var ne = bounds.getNorthEast();
+    var sw = bounds.getSouthWest();
+    var lngw = sw.lng()
+    var lats = sw.lat()
+    var lnge = ne.lng()
+    var latn = ne.lat()
+
+    $.getJSON('/places.json?lngw='+lngw+'&lats='+lats+'&lnge='+lnge+'&latn='+latn+'&chain='+chain, function (json) {
+      //remove current markers
+      
+      for (chains_marker in chainsMarkers){
+        chainsMarkers[chains_marker].setMap(null)
+      }
+      chainsMarkers = []
+
+      for (place in json){
+        chains_marker = createChainMarker(json[place])
+        chainsMarkers[json[place]['place_id']] = chains_marker        
+      }
+    })
+  }
+  else {
+    //remove current markers
+    for (chains_marker in chainsMarkers){
+      chainsMarkers[chains_marker].setMap(null)
+    }
+    chainsMarkers = []
+  }
+}
+
+function loadChains(chain, start, end) {
+  setVisible('#loading', true);
+
+  function decodeHtml(html) {
+    var txt = document.createElement("textarea");
+    txt.innerHTML = html;
+    return txt.value;
+  }
+  $('#chains_name').val(decodeHtml(chain))
+
+  //remove current layers
+  for (chain_layer in chains_dict){        
+    chains_dict[chain_layer]['layer'].setMap(null)
+  }
+  infowindow_chains.close()
+
+  this.layer_controller = function (layers, map){
+
+    function LayerControl(controlDiv, map, layers) {
+      layers.forEach(function(item, index, array) {
+        console.log(item)
+        // Build the checkboxes and labels
+        const controlUI = document.createElement("input");
+        controlUI.type="checkbox";
+        controlUI.checked=true;
+        controlUI.id=item;
+        controlUI.zoom = 3.5;
+        controlDiv.appendChild(controlUI);
+        const labelUI = document.createElement("label");
+        labelUI.for=item;
+        labelUI.innerHTML=vendor_data[item]['vendor_name'];
+        labelUI.style.color = vendor_data[item]['vendor_colour']//"rgb(25,25,25)";
+        labelUI.style.fontFamily = "Roboto,Arial,sans-serif";
+        labelUI.style.fontSize = "18px";
+        labelUI.style.lineHeight = "25px";
+        labelUI.style.paddingLeft = "10px";
+  
+        controlDiv.appendChild(labelUI);
+        // Setup the click event listener
+        controlUI.addEventListener("click", function(e) {
+            toggle_layer(controlUI.id, controlUI.checked)
+        });
+        controlDiv.appendChild(document.createElement("br"))
+      });
+    }
+  
+    function toggle_layer(vendor, state){
+      for (const [key, value] of Object.entries(chains_dict)) {
+        if (value['vendor']==vendor){
+          if(state){
+            chains_dict[key]['layer'].setMap(map)
+          } else {
+            chains_dict[key]['layer'].setMap(null)
+          }
+        }
+      }
+    }
+  
+    map.controls[google.maps.ControlPosition.TOP_RIGHT].clear()
+    if (layers.size>0){
+      const layerControlDiv = document.createElement("div");
+      layerControlDiv.style.backgroundColor = "#fff";
+      layerControlDiv.style.border = "2px solid #fff";
+      layerControlDiv.style.borderRadius = "3px";
+      layerControlDiv.style.boxShadow = "0 2px 6px rgba(0,0,0,.3)";
+      layerControlDiv.style.cursor = "pointer";
+      layerControlDiv.style.marginTop = "10px";
+      layerControlDiv.style.marginRight = "10px";
+      layerControlDiv.style.textAlign = "left";
+      layerControlDiv.style.padding = "10px";
+      LayerControl(layerControlDiv, map, layers);
+      map.controls[google.maps.ControlPosition.TOP_RIGHT].push(layerControlDiv);
+    }
+  }
+
+  this.chainsInfoWindow = function(map, event, infowindow){
+    var population = event.feature.getProperty('delivery_population');
+    var vendor = event.feature.getProperty('vendor');
+
+    contentString = document.createElement("div");
+    table = document.createElement("table");
+    table.classList.add('GeoPopCoverage')
+    table_row = document.createElement("tr")
+    table_cell = document.createElement("th")
+    table_cell.innerHTML = vendor_data[vendor]['vendor_name']
+    table_cell.colSpan = 2
+    table_row.appendChild(table_cell)
+    table.appendChild(table_row)
+    table_row = document.createElement("tr")
+    table_cell = document.createElement("td")
+    table_cell.innerHTML = 'Population'
+    table_row.appendChild(table_cell)
+    table_cell = document.createElement("td")
+    table_cell.innerHTML = population.toLocaleString()
+    table_row.appendChild(table_cell)
+    table.appendChild(table_row)
+    contentString.appendChild(table)
+
+    var info_bounds = new google.maps.LatLngBounds();
+    var geometry = event.feature.getGeometry();
+  
+    geometry.forEachLatLng(function(point){
+      info_bounds.extend({
+        lat : point.lat(),
+        lng : point.lng()
+      });
+    });
+    var center = info_bounds.getCenter();
+  
+    // Create invisible marker for info window
+    var marker = new google.maps.Marker({
+      position: center,
+      map: map,
+      visible : false
+    });
+    // Create info window
+    infowindow.setContent(contentString);
+    infowindow.open(map, marker);
+  }
+
+  $.getJSON('chainsboundary.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+'&chain='+chain, function (json) {
+    for (feature in json['features']){
+      geojson = json['features'][feature]
+      vendor = json['features'][feature]['properties']['vendor']
+      delivery_population = json['features'][feature]['properties']['delivery_population']
+      
+      chain_layer = new google.maps.Data({map: chains_map});
+      chain_layer.addGeoJson(geojson);
+      chains_dict[vendor] = {'layer':chain_layer,'vendor':vendor}
+
+      chain_layer.setStyle({
+        fillColor: vendor_data[vendor]['vendor_colour'],
+        fillOpacity: 0.5,
+        strokeColor: 1,
+        strokeWeight: 3,
+        zIndex: 1/delivery_population
+      });
+
+      chain_layer.addListener('click', function(event) {
+        chainsInfoWindow(map, event, infowindow_chains);
+      }); 
+    }
+     
+    //fit the map to the bounds
+    chain_bounds = new google.maps.LatLngBounds();
+    for (chain_layer in chains_dict){        
+      chains_dict[chain_layer]['layer'].forEach(function(feature){
+        feature.getGeometry().forEachLatLng(function(latlng){
+            chain_bounds.extend(latlng)
+            });
+          });
+    }
+    chains_map.fitBounds(chain_bounds, 0)
+ 
+    layers = new Set(Object.values(chains_dict).map(({vendor})=>vendor))
+    layer_controller(layers, chains_map)
+    setVisible('#loading', false);
+  });
 }

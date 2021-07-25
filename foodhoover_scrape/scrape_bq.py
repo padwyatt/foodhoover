@@ -3,6 +3,7 @@ import time
 
 import urllib
 import json
+from datetime import timedelta
 
 import numpy as np
 
@@ -400,7 +401,7 @@ def bq_places_table(run_id):
             (SELECT\
                 hoover_place_id as place_id,\
                 place_name.value as place_name,\
-                CONCAT(place_name.value,': ',place_sector.value, ' (',place_vendors,')') as place_label,\
+                CONCAT(place_name.value,': ',place_sector.value, ' (',ARRAY_TO_STRING(place_vendors,','),')') as place_label,\
                 place_sector.value as place_sector,\
                 place_lat,\
                 place_lng,\
@@ -413,7 +414,7 @@ def bq_places_table(run_id):
                     MIN(place_lng) as place_lng,\
                     APPROX_TOP_COUNT(rx_name,1) as place_name,\
                     APPROX_TOP_COUNT(rx_sector,1) as place_sector,\
-                    STRING_AGG(DISTINCT(vendor),', ') as place_vendors\
+                    ARRAY_AGG(DISTINCT(vendor)) as place_vendors\
                 FROM (\
                     SELECT *,\
                     PERCENTILE_CONT(rx_lat, 0.5) OVER(PARTITION BY hoover_place_id) AS place_lat,\
@@ -618,6 +619,66 @@ def bq_agg_rx_results_fast(run_id):
         bq_step_logger(run_id, 'AGGREGATE-FAST', 'FAIL', str(e))
         return e
 
+def bq_agg_rx_cx(run_id):
+    try:
+        client = get_bq_client()
+
+        sql = "SELECT MAX(scrape_time) as last_date FROM rooscrape.foodhoover_store.agg_country_run"
+        query_job = client.query(sql)  # API request
+        rows = query_job.result()
+        row = rows.next()
+        end = row['last_date']
+        start = end - timedelta(days=14)
+
+        end_date = end.strftime('%Y-%m-%d')
+        start_date = start.strftime('%Y-%m-%d')
+        
+        table_id = 'rooscrape.foodhoover_store.agg_rx_cx'
+        client.delete_table(table_id, not_found_ok=True)
+
+        sql = "\
+            CREATE TABLE "+table_id+"\
+            CLUSTER BY\
+            rx_uid\
+            AS\
+            SELECT\
+                ref.rx_uid,\
+                ref.vendor,\
+                zones.delivery_zone,\
+                zones.delivery_population,\
+                places.place_id,\
+                places.place_name,\
+                places.place_lat,\
+                places.place_lng,\
+                zones.sectors_covered\
+            FROM (\
+                SELECT\
+                    results.rx_uid,\
+                    ST_SIMPLIFY(ST_SNAPTOGRID(ST_UNION_AGG(sectors.geometry),0.0001),50) as delivery_zone,\
+                    SUM(sectors.population) as delivery_population,\
+                    ARRAY_AGG(DISTINCT(postcode_sector)) as sectors_covered\
+                FROM (\
+                    SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
+                    WHERE scrape_time>='"+start_date+"' and scrape_time<='"+end_date+"'\
+                    GROUP BY rx_uid, cx_postcode) results\
+                LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
+                LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
+                GROUP BY results.rx_uid) zones\
+            RIGHT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = zones.rx_uid\
+            LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
+            "
+        query_job = client.query(sql)  # API request
+        rows = query_job.result()
+
+        table = client.get_table(table_id)
+        num_rows_added = table.num_rows
+
+        bq_step_logger(run_id, 'AGG-RX-CX', 'SUCESS', num_rows_added)
+        return num_rows_added
+    except Exception as e:
+        bq_step_logger(run_id, 'AGG-RX-CX', 'FAIL', str(e))
+        return e
+
 def bq_to_sql_via_client(run_id): ###########not currently used
     try:
         client = get_bq_client()
@@ -752,10 +813,10 @@ def import_sql(file_path, columns, table_name):
 
 def generic_exporter(run_id, bq_table, sql_table, sql_schema, bq_select_sql, sql_create_statement, write_mode):
     ##get a reference to the data to export
-    if write_mode =='overwrite':
-        target_table = bq_table
-    else:
-        target_table = write_bq_table('rooscrape.foodhoover_store.temp_table', bq_select_sql)
+    #if write_mode =='overwrite':
+    #    target_table = write_bq_table(bq_table, bq_select_sql)
+    #else:
+    target_table = write_bq_table('rooscrape.foodhoover_store.temp_table', bq_select_sql)
 
     ##write that table to GCS
     gcs_folder = sql_table+'-'+run_id
@@ -826,7 +887,7 @@ def bq_export_places(run_id):
         bq_table = 'rooscrape.foodhoover_store.places'
         sql_table = 'places'
         sql_schema = ['place_id', 'place_name', 'place_label', 'place_sector', 'place_lat', 'place_lng', 'place_location','place_vendors']
-        bq_select_sql = "SELECT place_id, place_name, place_label, place_sector, place_lat, place_lng, TO_HEX(ST_ASBINARY(place_location)) as place_location, place_vendors FROM foodhoover_store.places"
+        bq_select_sql = "SELECT place_id, place_name, place_label, place_sector, place_lat, place_lng, TO_HEX(ST_ASBINARY(place_location)) as place_location, REPLACE(REPLACE(TO_JSON_STRING(place_vendors),'[','{'),']','}') as place_vendors FROM foodhoover_store.places"
         write_mode = 'overwrite'
         sql_create_statement = "table_schemas/places"
 
@@ -899,4 +960,20 @@ def bq_export_agg_country_run(run_id):
         return status
     except Exception as e:
         bq_step_logger(run_id, 'EXPORT-AGG-COUNTRY-RUN', 'FAIL', str(e))
+        return e
+
+def bq_export_agg_rx_cx(run_id):
+    try:
+        bq_table = 'rooscrape.foodhoover_store.agg_rx_cx'
+        sql_table = 'agg_rx_cx'
+        sql_schema = ['rx_uid', 'vendor', 'delivery_zone','delivery_population','place_id','place_name','place_lat','place_lng','sectors_covered']
+        bq_select_sql = "SELECT rx_uid, vendor,  TO_HEX(ST_ASBINARY(delivery_zone)) as delivery_zone, delivery_population,place_id,place_name,place_lat,place_lng, REPLACE(REPLACE(TO_JSON_STRING(sectors_covered),'[','{'),']','}') as sectors_covered FROM rooscrape.foodhoover_store.agg_rx_cx"
+        sql_create_statement = "table_schemas/agg_rx_cx"
+
+        status = generic_exporter(run_id, bq_table, sql_table, sql_schema, bq_select_sql, sql_create_statement,'overwrite')
+
+        bq_step_logger(run_id, 'EXPORT-AGG-RX-CX', 'SUCESS', status)
+        return status
+    except Exception as e:
+        bq_step_logger(run_id, 'EXPORT-AGG-RX-CX', 'FAIL', str(e))
         return e

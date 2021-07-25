@@ -5,5 +5,19 @@
 7. Set Min size for hoover box
 8. Redo infowindow on country map
 
-9. add last updated
 10. add info page
+
+######ui
+### only update new markers, to avoid flickering 
+### make markers clickable --- mainly done
+### some markers aren't showing... suspicious...
+### adapt legend to show population counts and rx counts
+
+#####cosmetics
+###stop exporting rx_cx_full, and clean up storage
+###see if we can move some of the geo cleanup out of the queries and into BQ (like simplify, snaptogrid, st_dump)
+
+###resto
+Add Rx name and postcode to infowinow
+
+##set boundary border width depending on zoom level

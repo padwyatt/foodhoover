@@ -7,7 +7,7 @@ CREATE TABLE public.places
     place_lat double precision,
     place_lng double precision,
     place_location geometry,
-    place_vendors text COLLATE pg_catalog."default",
+    place_vendors text[] COLLATE pg_catalog."default",
     CONSTRAINT place_pkey PRIMARY KEY (place_id)
 );
 

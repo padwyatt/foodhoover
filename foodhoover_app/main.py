@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from datetime import datetime, timedelta
-from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_flash, count_flash, get_last_update
+from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_flash, count_flash, get_last_update, get_chains_boundary, get_places_in_area
 import json
 
 app = Flask(__name__)
@@ -14,29 +14,64 @@ f = open('secrets.json')
 secrets = json.load(f)
 map_secret = secrets['map_key']
 
+first_update, last_update = get_last_update()
+start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
+end = last_update.strftime('%Y-%m-%d')
+
+#@app.route('/')
+#
+#def index(): 
+#
+#    if 'tab' in request.args:
+#        tab_name = request.args.get('tab')
+#    else:
+#        tab_name = 'country'
+#    
+#   if 'start' in request.args:
+#        start = request.args.get('start')
+#    else:
+#        start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
+#
+#    if 'end' in request.args:
+#        end = request.args.get('end')
+#    else:
+#        end = last_update.strftime('%Y-%m-%d')
+#
+#    place_ids = request.args.getlist('place_id')
+#   place_details = get_restaurant_details(place_ids)
+#   return render_template('index.html', place_details=place_details, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
+
+@app.route('/aggregator')
 @app.route('/')
-
-def index(): 
-
-    if 'tab' in request.args:
-        tab_name = request.args.get('tab')
-    else:
-        tab_name = 'country'
-    
+@app.errorhandler(404)
+def country_view(start=start,end=end):
     if 'start' in request.args:
         start = request.args.get('start')
-    else:
-        start = (datetime.now() - timedelta(14)).strftime('%Y-%m-%d')
-
     if 'end' in request.args:
         end = request.args.get('end')
-    else:
-        end = (datetime.now() - timedelta(1)).strftime('%Y-%m-%d')
+    tab_name = 'country'
+    return render_template('index.html', place_details=None, chain=None, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
 
+@app.route('/restaurant')
+def restaurant_view(start=start, end=end):
+    if 'start' in request.args:
+        start = request.args.get('start')
+    if 'end' in request.args:
+        end = request.args.get('end')
     place_ids = request.args.getlist('place_id')
     place_details = get_restaurant_details(place_ids)
-    updated_time = get_last_update()
-    return render_template('index.html', place_details=place_details, tab_name = tab_name, start=start, end=end, map_secret=map_secret, updated_time=updated_time)
+    tab_name = 'resto'
+    return render_template('index.html', place_details=place_details, chain=None, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
+
+@app.route('/chain')
+def chain_view(start=start, end=end):
+    if 'start' in request.args:
+        start = request.args.get('start')
+    if 'end' in request.args:
+        end = request.args.get('end')
+    chain = request.args.get('chain')
+    tab_name = 'chains'
+    return render_template('index.html', place_details=None, chain=chain, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
 
 @app.route('/country.json')
 def country_data():
@@ -53,8 +88,17 @@ def country_data():
 def delivery_boundary():
     start = request.args.get('start')
     end = request.args.get('end')
-    place_id = request.args.get('place_id')
-    return get_delivery_boundary(start, end, place_id)
+    place_ids = request.args.getlist('place_id')
+    return get_delivery_boundary(start, end, place_ids, last_update)
+
+@app.route('/places.json')
+def get_places():
+    lngw = request.args.get('lngw')
+    lats = request.args.get('lats')
+    lnge = request.args.get('lnge')
+    latn = request.args.get('latn')
+    chain= request.args.get('chain')
+    return jsonify(get_places_in_area(chain, lngw, lats, lnge, latn))
 
 @app.route('/restaurant.json')
 def restaurant():
@@ -68,6 +112,13 @@ def geo_objects():
     lnge = request.args.get('lnge')
     latn = request.args.get('latn')
     return get_geo_objects(lngw, lats, lnge, latn)
+
+@app.route('/chainsboundary.json')
+def chains_boundary():
+    chain= request.args.get('chain')
+    start = request.args.get('start')
+    end = request.args.get('end')
+    return get_chains_boundary(chain, start, end, last_update)
 
 @app.route('/autocomplete', methods=['GET'])
 def autocomplete():

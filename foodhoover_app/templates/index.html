@@ -43,7 +43,7 @@
             font-size: 25px;
 
             height: 60px;
-            flex: 1 0 300px;
+            flex: 1 0 200px;
             max-width: 600px;
             font-weight: bold;
         }
@@ -128,6 +128,26 @@
             font-size: clamp(10px, 2vmin, 20px);
         }
 
+        /*Chain map elements*/
+
+        #chains_select{
+            flex: 1 0 300px;
+            max-width: 600px;
+            margin: 15px;
+            height: 34px;
+            line-height: 22px;
+        }
+        #chains_name{
+            height: 100%;
+            width: calc(100% - 80px);
+            border: 1px solid #ccc;
+        }
+        #chains_search{
+            height: 34px;
+            width: 60px;
+            margin-left: 10px;
+        }
+
         /*Resto map elements*/
         .PlacePopCoverage{
             border-spacing: 10px;
@@ -180,8 +200,9 @@
 
 <body>
     <div id='header'>
-        <button id='country_tab' class='tab' onclick="loadTab('country')">Coverage</button>
-        <button id='resto_tab' class='tab' onclick="loadTab('resto')">Delivery Areas</button>
+        <button id='country_tab' class='tab' onclick="window.location.href='/aggregator';">Aggregators</button>
+        <button id='resto_tab' class='tab' onclick="window.location.href='/restaurant';">Restaurants</button>
+        <button id='chains_tab' class='tab' onclick="window.location.href='/chain';">Chains</button>
     </div>
 
     <div class='scene' id='resto_scene'>
@@ -195,9 +216,11 @@
             </div>
             <div id='multiselect'>
                 <select class="tokenize-demo" multiple>
-                    {% for place in place_details %}
-                    <option value={{place_details[place]['place_id']}} selected>{{place_details[place]['place_label']}}</option>
-                    {% endfor %}
+                    {% if place_details is not none %}   
+                        {% for place in place_details %}
+                        <option value={{place_details[place]['place_id']}} selected>{{place_details[place]['place_label']}}</option>
+                        {% endfor %}
+                    {% endif %}
                 </select>
             </div>
         </div>
@@ -215,9 +238,26 @@
         </div>
         <div id='country_map' class='map'></div>
     </div>
+
+    <div class='scene' id='chains_scene' style='display:none;'>
+        <div class='header_form'>
+            <div class='datepicker'>
+                <div class="reportrange" style="background: #fff; cursor: pointer; padding: 5px 10px; border: 1px solid #ccc;">
+                    <i class="fa fa-calendar"></i>&nbsp;
+                    <span></span> <i class="fa fa-caret-down"></i>
+                </div>
+            </div>
+            <div id="chains_select">
+                <input type="text" id="chains_name" name="chains_name" placeholder="Chain name to match, i.e. 'Pizza Hut'">
+                <input type="button" id="chains_search" value="Search" onclick="setChains()">
+            </div>
+        </div>
+        <div id='chains_map' class='map'></div>
+    </div>
+
     <div class='footer'>
         <span style='float:left'> <a href='https://github.com/padwyatt/foodhoover'>About Foodhoover</a></span>
-        <span style='float:right'> Last full data update (UTC): {{updated_time.strftime('%Y-%m-%d %H:%M:%S')}}</span> 
+        <span style='float:right'> Last full data update (UTC): {{last_update.strftime('%Y-%m-%d %H:%M:%S')}}</span> 
     </div>
 
     <div id="loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});"></div>
@@ -255,16 +295,26 @@
     var country_map = {}
     var place_details = {}
     var layers_dict = {}
+    var chains_dict = {}
     var geo_layer = {}
     var bounds = {}
     var infowindow_resto = {}
     var infowindow_country = {}
+    var infowindow_chains_place = {}
     var places_loaded = new Array()
     var flashZone = {}
     var flashMarker = {}
+    var chainsMarkers = new Array()
     
     //loading places from the URL (passed by Flask).
     var place_details = JSON.parse('{{place_details | tojson}}');
+
+    //definition for the chains page
+    var chain = '{{chain}}'
+    var latn = '{{latn}}'
+    var lats = '{{lats}}'
+    var lngw = '{{lngw}}'
+    var lnge = '{{lnge}}'
 
     function changeDate(startDate, endDate) {
         $('.reportrange span').html(startDate.format('MMMM D, YYYY') + ' - ' + endDate.format('MMMM D, YYYY'));
@@ -277,18 +327,24 @@
         switch (tab_name){
             case 'resto':
                 for (const [place_id, place] of Object.entries(place_details)) {
-                    placeBoundaries(place_id, resto_map, start, end)
+                    placeBoundaries([place_id], resto_map, start, end)
                 }
                 break;
             case 'country':
                 country_map = CountryData(country_map, start, end);
                 break;
+            case 'chains':
+                loadChains(chain, start, end);
+                break;
+
         }
     }
 
     $('.reportrange').daterangepicker({
         startDate: start,
         endDate: end,
+        minDate: moment('{{first_update}}','YYYY-MM-DD'),
+        maxDate: moment('{{last_update}}','YYYY-MM-DD'),
         ranges: {
             'Today': [moment(), moment()],
             'Yesterday': [moment().subtract(1, 'days'), moment().subtract(1, 'days')],
@@ -337,6 +393,13 @@
         updateParams('place_id',value,'remove')
         removePlace(value)
     });
+
+    //Event when return is pressed in the Chains input
+    $("#chains_name").keyup(function(event) {
+    if (event.keyCode === 13) {
+        $("#chains_search").click();
+    }
+});
    
 </script>
 <script async defer src="https://maps.googleapis.com/maps/api/js?key={{map_secret}}&callback=loadTab"></script>
