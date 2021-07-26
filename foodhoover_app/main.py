@@ -71,6 +71,7 @@ def chain_view(start=start, end=end):
         end = request.args.get('end')
     chain = request.args.get('chain')
     tab_name = 'chains'
+    print(chain)
     return render_template('index.html', place_details=None, chain=chain, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
 
 @app.route('/country.json')

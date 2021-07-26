@@ -531,6 +531,67 @@ def bq_agg_results_sector(run_id):
         bq_step_logger(run_id, 'AGGREGATE-SECTOR', 'FAIL', str(e))
         return e 
 
+def bq_agg_results_country_pop(run_id):
+    try:
+        client = get_bq_client()
+        table_id = 'rooscrape.foodhoover_store.agg_country_run_pop'
+
+        table = client.get_table(table_id)
+        num_rows_begin = table.num_rows
+
+        if run_id=='full': ## this is the tag we to remove the where clause and compute for all runids
+            where_clause = ""
+            sql = "DELETE FROM "+table_id+" WHERE 1=1" ##empty the current table
+            query_job = client.query(sql)  # API request
+            query_job.result()
+        else:
+            where_clause = " WHERE run_id = '"+run_id+"' "
+        
+        sql ="\
+            MERGE "+table_id+"  q \
+            USING(\
+            WITH raw as (\
+            SELECT run_id, max(scrape_time) as scrape_time, ref.vendor, look.postcode_sector, ARRAY_AGG(DISTINCT coverage.rx_uid) as rx_included FROM (\
+                SELECT CONCAT(rx_slug,'-',vendor) as rx_uid, cx_postcode, run_id, max(scrape_time) as scrape_time FROM rooscrape.foodhoover_store.rx_cx_results_raw"\
+                +where_clause+"\
+                GROUP BY run_id, rx_uid, cx_postcode) coverage\
+            LEFT JOIN rooscrape.foodhoover_store.postcode_lookup as look on look.postcode=coverage.cx_postcode\
+            LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = coverage.rx_uid\
+            GROUP BY run_id, ref.vendor, look.postcode_sector)\
+            SELECT\
+                raw.run_id,\
+                raw.vendor,\
+                MAX(raw.scrape_time) as scrape_time,\
+                SUM(sectors.population) as delivery_population,\
+                MAX(rx_num) as rx_num\
+            FROM raw\
+            LEFT JOIN rooscrape.foodhoover_store.sectors sectors on raw.postcode_sector=sectors.sector\
+            LEFT JOIN (\
+                SELECT raw.run_id,raw.vendor,COUNT(DISTINCT rx_uid) as rx_num\
+                FROM raw, UNNEST(raw.rx_included) as rx_uid\
+                GROUP BY raw.run_id, raw.vendor\
+                ) rx_list ON rx_list.vendor=raw.vendor and rx_list.run_id=raw.run_id\
+            GROUP BY raw.run_id, raw.vendor) p\
+            ON q.run_id=p.run_id and q.vendor=p.vendor\
+            WHEN MATCHED THEN\
+            UPDATE SET q.scrape_time = p.scrape_time, q.delivery_population=p.delivery_population,q.rx_num=p.rx_num\
+            WHEN NOT MATCHED THEN\
+            INSERT (run_id, scrape_time,vendor,delivery_population,rx_num) VALUES (p.run_id, p.scrape_time, p.vendor, p.delivery_population, p.rx_num)\
+        "
+
+        query_job = client.query(sql)  # API request
+        rows = query_job.result()
+
+        table = client.get_table(table_id)
+        num_rows_added = table.num_rows - num_rows_begin
+
+        bq_step_logger(run_id, 'AGGREGATE-COUNTRY-POP', 'SUCESS', num_rows_added)
+        return num_rows_added  
+    except Exception as e:
+        bq_step_logger(run_id, 'AGGREGATE-COUNTRY-POP', 'FAIL', str(e))
+        return e      
+
+
 def bq_agg_results_country(run_id):
     try:
         client = get_bq_client()
@@ -546,7 +607,7 @@ def bq_agg_results_country(run_id):
             query_job.result()
         else:
             where_clause = " WHERE b.run_id = '"+run_id+"' "
-            
+        
         sql = " \
             MERGE "+table_id+"  q \
             USING \
@@ -816,6 +877,7 @@ def generic_exporter(run_id, bq_table, sql_table, sql_schema, bq_select_sql, sql
     #if write_mode =='overwrite':
     #    target_table = write_bq_table(bq_table, bq_select_sql)
     #else:
+
     target_table = write_bq_table('rooscrape.foodhoover_store.temp_table', bq_select_sql)
 
     ##write that table to GCS
@@ -960,6 +1022,28 @@ def bq_export_agg_country_run(run_id):
         return status
     except Exception as e:
         bq_step_logger(run_id, 'EXPORT-AGG-COUNTRY-RUN', 'FAIL', str(e))
+        return e
+
+def bq_export_agg_country_run_pop(run_id):
+    try:
+        bq_table = 'rooscrape.foodhoover_store.agg_country_run_pop'
+        sql_table = 'agg_country_run_pop'
+        sql_schema = ['run_id', 'scrape_time', 'vendor','delivery_population', 'rx_num']
+        sql_create_statement = "table_schemas/agg_country_run_pop"
+
+        if run_id=='full':
+            write_mode = 'overwrite'
+            bq_select_sql = "SELECT run_id, scrape_time, vendor, delivery_population, rx_num FROM rooscrape.foodhoover_store.agg_country_run_pop WHERE scrape_time>='2021-03-15'"
+        else:
+            write_mode = 'append'
+            bq_select_sql = "SELECT run_id, scrape_time, vendor, delivery_population, rx_num FROM rooscrape.foodhoover_store.agg_country_run_pop WHERE scrape_time>='2021-03-15' and run_id='"+run_id+"'"
+
+        status = generic_exporter(run_id, bq_table, sql_table, sql_schema, bq_select_sql, sql_create_statement, write_mode)
+
+        bq_step_logger(run_id, 'EXPORT-AGG-COUNTRY-RUN-POP', 'SUCESS', status)
+        return status
+    except Exception as e:
+        bq_step_logger(run_id, 'EXPORT-AGG-COUNTRY-RUN-POP', 'FAIL', str(e))
         return e
 
 def bq_export_agg_rx_cx(run_id):

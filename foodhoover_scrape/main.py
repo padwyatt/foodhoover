@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template
-from scrape_bq import bq_get_places, bq_places_table, bq_places_proc, bq_run_scrape, bq_insert_new_rx, bq_update_ue_sectors, bq_crawl_roo, bq_agg_results_district, bq_agg_results_sector, bq_agg_rx_cx, bq_export_places, bq_update_geos, bq_agg_rx_results_fast, bq_step_logger, bq_agg_results_country, bq_export_rx_cx_results,bq_export_rx_ref,bq_export_agg_sector_run, bq_export_agg_district_run, bq_export_agg_country_run,bq_export_agg_rx_cx
+from scrape_bq import bq_get_places, bq_places_table, bq_places_proc, bq_run_scrape, bq_agg_results_country_pop, bq_insert_new_rx, bq_update_ue_sectors, bq_crawl_roo, bq_agg_results_district, bq_agg_results_sector, bq_agg_rx_cx, bq_export_places, bq_update_geos, bq_agg_rx_results_fast, bq_step_logger, bq_agg_results_country, bq_export_rx_cx_results,bq_export_rx_ref,bq_export_agg_sector_run, bq_export_agg_district_run, bq_export_agg_country_run,bq_export_agg_country_run_pop,bq_export_agg_rx_cx
 from status import get_run_status, get_ref_stats, get_country_stats
 import uuid
 
@@ -10,7 +10,7 @@ app = Flask(__name__)
 def bq_post_process(steps, run_id):
     results = []
     if steps == ['ALL']:
-        steps = ['INSERT','UPDATE-ROO','UPDATE-UE','UPDATE-GEOS','GET-PLACES','PROC-PLACES','CREATE-PLACES','AGG-RESULTS-DISTRICT','AGG-RESULTS-SECTOR', 'RX-RESULTS-FAST','AGG-RESULTS-COUNTRY','AGG-RX-CX','EXPORT-PLACES','EXPORT-RX-CX-RESULTS','EXPORT-RX-REF','EXPORT-AGG-SECTOR-RUN','EXPORT-AGG-DISTRICT-RUN','EXPORT-AGG-COUNTRY-RUN','EXPORT-AGG-RX-CX']
+        steps = ['INSERT','UPDATE-ROO','UPDATE-UE','UPDATE-GEOS','GET-PLACES','PROC-PLACES','CREATE-PLACES','AGG-RESULTS-DISTRICT','AGG-RESULTS-SECTOR', 'RX-RESULTS-FAST','AGG-RESULTS-COUNTRY','AGG-RESULTS-COUNTRY-POP','AGG-RX-CX','EXPORT-PLACES','EXPORT-RX-CX-RESULTS','EXPORT-RX-REF','EXPORT-AGG-SECTOR-RUN','EXPORT-AGG-DISTRICT-RUN','EXPORT-AGG-COUNTRY-RUN','EXPORT-AGG-COUNTRY-RUN-POP','EXPORT-AGG-RX-CX']
     for step in steps:
         if step == 'INSERT':
             result = bq_insert_new_rx(run_id)
@@ -57,6 +57,10 @@ def bq_post_process(steps, run_id):
             result = bq_agg_results_country(run_id)
             print(result)
             results.append(step+": "+str(result))
+        elif step == 'AGG-RESULTS-COUNTRY-POP':
+            result = bq_agg_results_country_pop(run_id)
+            print(result)
+            results.append(step+": "+str(result))
         elif step == 'AGG-RX-CX':
             result = bq_agg_rx_cx(run_id)
             print(result)
@@ -83,6 +87,10 @@ def bq_post_process(steps, run_id):
             results.append(step+": "+str(result))
         elif step == 'EXPORT-AGG-COUNTRY-RUN':
             result = bq_export_agg_country_run(run_id)
+            print(result)
+            results.append(step+": "+str(result))
+        elif step == 'EXPORT-AGG-COUNTRY-RUN-POP':
+            result = bq_export_agg_country_run_pop(run_id)
             print(result)
             results.append(step+": "+str(result))
         elif step == 'EXPORT-AGG-RX-CX':

@@ -157,6 +157,12 @@
             border-spacing: 10px;
             border-collapse: separate;
         }
+        .GeoPopCoverage td, .GeoPopCoverage th{
+            line-height: 25px;
+            margin-bottom: 5px;
+            display: table-cell;
+            text-align: center;
+        }
 
         .footer{
             height: 40px;
@@ -310,7 +316,7 @@
     var place_details = JSON.parse('{{place_details | tojson}}');
 
     //definition for the chains page
-    var chain = '{{chain}}'
+    var chain = {{chain |tojson}}
     var latn = '{{latn}}'
     var lats = '{{lats}}'
     var lngw = '{{lngw}}'
@@ -326,8 +332,9 @@
         
         switch (tab_name){
             case 'resto':
-                for (const [place_id, place] of Object.entries(place_details)) {
-                    placeBoundaries([place_id], resto_map, start, end)
+                place_ids = Object.keys(place_details)
+                if (place_ids.length !== 0){
+                    placeBoundaries(place_ids, resto_map, start, end)
                 }
                 break;
             case 'country':

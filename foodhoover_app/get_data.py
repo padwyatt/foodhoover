@@ -484,32 +484,39 @@ def get_restaurant_details(place_ids):
 def get_chains_boundary(chain, start, end, last_update):
 
     bq_sql = "\
-        SELECT\
-            z.vendor,\
-            ST_AsGeoJSON(ST_UNION(ST_DUMP(ST_SIMPLIFY(ST_UNION_AGG(sectors.geometry),50),2))) as delivery_area,\
-            SUM(sectors.population) as delivery_population\
-        FROM (\
-            SELECT ref.vendor, look.postcode_sector FROM (\
+            WITH raw as (\
+            SELECT ref.vendor, look.postcode_sector, ARRAY_AGG(DISTINCT coverage.rx_uid) as rx_included FROM (\
                 SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                WHERE rx_uid IN(\
+                WHERE scrape_time>=@start AND scrape_time<=@end\
+                AND rx_uid IN(\
                     SELECT distinct(ref.rx_uid) from rooscrape.foodhoover_store.places\
                     LEFT join rooscrape.foodhoover_store.rx_ref ref on ref.hoover_place_id = places.place_id\
-                    WHERE UPPER(place_name) LIKE UPPER(@chain) \
+                    WHERE UPPER(place_name) LIKE UPPER(@chain)\
                     )\
-                AND scrape_time>=@start AND scrape_time<=@end\
                 GROUP BY rx_uid, cx_postcode) coverage\
             LEFT JOIN rooscrape.foodhoover_store.postcode_lookup as look on look.postcode=coverage.cx_postcode\
             LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = coverage.rx_uid\
-            GROUP BY ref.vendor, look.postcode_sector\
-        ) z\
-        LEFT JOIN rooscrape.foodhoover_store.sectors on sectors.sector = z.postcode_sector\
-        GROUP BY z.vendor\
+            GROUP BY ref.vendor, look.postcode_sector)\
+            SELECT\
+                raw.vendor,\
+                ST_AsGeoJSON(ST_UNION(ST_DUMP(ST_SIMPLIFY(ST_UNION_AGG(sectors.geometry),50),2))) as delivery_area,\
+                SUM(sectors.population) as delivery_population,\
+                MAX(rx_num) as rx_num\
+            FROM raw\
+            LEFT JOIN rooscrape.foodhoover_store.sectors sectors on raw.postcode_sector=sectors.sector\
+            LEFT JOIN (\
+                SELECT raw.vendor, COUNT(DISTINCT rx_uid) as rx_num\
+                FROM raw, UNNEST(raw.rx_included) as rx_uid\
+                GROUP BY raw.vendor\
+                ) rx_list ON rx_list.vendor=raw.vendor\
+            GROUP BY raw.vendor\
         "
 
     sql = text("\
         SELECT\
             pop_stats.vendor,\
             pop_stats.delivery_population,\
+            results.rx_num as rx_num,\
             ST_ASGEOJSON(results.delivery_area) as delivery_area\
             FROM (\
                 SELECT\
@@ -529,7 +536,8 @@ def get_chains_boundary(chain, start, end, last_update):
         LEFT JOIN\
             (SELECT\
                 vendor,\
-                ST_SIMPLIFY(ST_UNION(ST_CollectionExtract(ST_MAKEVALID(delivery_zone),3)),0.001) as delivery_area\
+                ST_SIMPLIFY(ST_UNION(ST_CollectionExtract(ST_MAKEVALID(delivery_zone),3)),0.001) as delivery_area,\
+                COUNT(DISTINCT rx_uid) as rx_num\
             FROM agg_rx_cx\
             WHERE UPPER(place_name) LIKE UPPER(:chain)\
             GROUP BY vendor) results ON results.vendor=pop_stats.vendor\
@@ -565,7 +573,8 @@ def get_chains_boundary(chain, start, end, last_update):
                 "geometry":json.loads(row['delivery_area']),
                 "properties": {
                     "vendor": row['vendor'],
-                    "delivery_population" : row['delivery_population']
+                    "delivery_population" : row['delivery_population'],
+                    "rx_num": row['rx_num']
                 }
             } for row in result]
     }

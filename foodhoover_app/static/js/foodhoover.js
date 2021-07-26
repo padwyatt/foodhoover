@@ -401,8 +401,18 @@ function loadTab(tab=tab_name) {
                 console.log('changezoom')
                 clearTimeout(timer);
                 timer = setTimeout(function() {
-                  if (chain !== 'None'){
+                  if (chain !== 'None' & chain !== null ){
                     loadChainMarkers();
+                  }
+                  zoom = chains_map.getZoom()
+                  for (vendor in chains_dict){
+                    chains_dict[vendor]['layer'].setStyle({
+                      fillColor: chains_dict[vendor]['layer'].style.fillColor,
+                      fillOpacity: 0.5,
+                      strokeColor: 1,
+                      strokeWeight: zoom/4,
+                      zIndex: chains_dict[vendor]['layer'].style.zIndex
+                    });
                   }
                 }, 500);
             }
@@ -413,14 +423,14 @@ function loadTab(tab=tab_name) {
             return function() {
                 clearTimeout(timer);
                 timer = setTimeout(function() {
-                  if (chain !== 'None'){
+                  if (chain !== 'None' & chain !== null ){
                     loadChainMarkers();
                   }
                 }, 500);
             }
           }());
           
-          if (chain !== 'None'){
+          if (chain !== 'None' & chain !== null ){
             loadChains(chain, start, end)
           }
           break;
@@ -647,14 +657,17 @@ function placeBoundaries(place_ids, map, start, end) {
   this.layer_controller = function (layers, map){
 
     function LayerControl(controlDiv, map, layers) {
+      layersDataTable = document.createElement("table");
       layers.forEach(function(item, index, array) {
+        layersDataRow = document.createElement("tr");
+        layersDataCell = document.createElement("td");
         // Build the checkboxes and labels
         const controlUI = document.createElement("input");
         controlUI.type="checkbox";
         controlUI.checked=true;
         controlUI.id=item;
         controlUI.zoom = 3.5;
-        controlDiv.appendChild(controlUI);
+        layersDataCell.appendChild(controlUI);
         const labelUI = document.createElement("label");
         labelUI.for=item;
         labelUI.innerHTML=vendor_data[item]['vendor_name'];
@@ -664,13 +677,15 @@ function placeBoundaries(place_ids, map, start, end) {
         labelUI.style.lineHeight = "25px";
         labelUI.style.paddingLeft = "10px";
   
-        controlDiv.appendChild(labelUI);
+        layersDataCell.appendChild(labelUI);
+        layersDataRow.appendChild(layersDataCell)
         // Setup the click event listener
         controlUI.addEventListener("click", function(e) {
             toggle_layer(controlUI.id, controlUI.checked)
         });
-        controlDiv.appendChild(document.createElement("br"))
+        layersDataTable.appendChild(layersDataRow)
       });
+      controlDiv.appendChild(layersDataTable)
     }
   
     function toggle_layer(vendor, state){
@@ -1066,6 +1081,7 @@ function countryMap(start, end){
 
 function setChains(){
   chain = $('#chains_name').val();
+  chain = chain.replace('’','\'') //deals with issue where iOS has a different apostrophe
 
   zoom = chains_map.getZoom()
   bounds =  chains_map.getBounds()
@@ -1109,6 +1125,15 @@ function createChainMarker(place){
     table_cell.colSpan = 2
     table_row.appendChild(table_cell)
     table.appendChild(table_row)
+    table_row = document.createElement("tr")
+    table_cell = document.createElement("td")
+    var place_link = document.createElement('a')
+    place_link.setAttribute('href','/restaurant?place_id='+this.place_id)
+    place_link.innerHTML = 'View restaurant'
+    table_cell.appendChild(place_link)
+    table_cell.colSpan = 2
+    table_row.appendChild(table_cell)
+    table.appendChild(table_row)
 
     contentString.appendChild(table)
     if (infowindow_chains_place) {
@@ -1146,13 +1171,11 @@ function loadChainMarkers(){
     var latn = ne.lat()
 
     $.getJSON('/places.json?lngw='+lngw+'&lats='+lats+'&lnge='+lnge+'&latn='+latn+'&chain='+chain, function (json) {
-      //remove current markers
-      
+      //remove current markers -- could be better to only remove ones that are not in new array      
       for (chains_marker in chainsMarkers){
-        chainsMarkers[chains_marker].setMap(null)
+          chainsMarkers[chains_marker].setMap(null)
       }
       chainsMarkers = []
-
       for (place in json){
         chains_marker = createChainMarker(json[place])
         chainsMarkers[json[place]['place_id']] = chains_marker        
@@ -1187,15 +1210,30 @@ function loadChains(chain, start, end) {
   this.layer_controller = function (layers, map){
 
     function LayerControl(controlDiv, map, layers) {
+      layersDataTable = document.createElement("table");
+      layersDataTable.classList.add('GeoPopCoverage')
+      layersDataRow = document.createElement("tr");
+      layersDataCell = document.createElement("th");
+      layersDataCell.innerHTML = ''
+      layersDataRow.appendChild(layersDataCell)
+      layersDataCell = document.createElement("th");
+      layersDataCell.innerHTML = 'Number of <p>Restaurants';
+      layersDataRow.appendChild(layersDataCell)
+      layersDataCell = document.createElement("th");
+      layersDataCell.innerHTML = 'Delivery <p>Population';
+      layersDataRow.appendChild(layersDataCell)
+      layersDataTable.appendChild(layersDataRow)
+
       layers.forEach(function(item, index, array) {
-        console.log(item)
+        layersDataRow = document.createElement("tr");
+        layersDataCell = document.createElement("td");
         // Build the checkboxes and labels
         const controlUI = document.createElement("input");
         controlUI.type="checkbox";
         controlUI.checked=true;
         controlUI.id=item;
         controlUI.zoom = 3.5;
-        controlDiv.appendChild(controlUI);
+        layersDataCell.appendChild(controlUI);
         const labelUI = document.createElement("label");
         labelUI.for=item;
         labelUI.innerHTML=vendor_data[item]['vendor_name'];
@@ -1204,16 +1242,30 @@ function loadChains(chain, start, end) {
         labelUI.style.fontSize = "18px";
         labelUI.style.lineHeight = "25px";
         labelUI.style.paddingLeft = "10px";
-  
-        controlDiv.appendChild(labelUI);
+        layersDataCell.appendChild(labelUI);
+        layersDataCell.style.textAlign = 'left';
+        layersDataRow.appendChild(layersDataCell)
+
+        layersDataCell = document.createElement("td");
+        labelDataCell = document.createElement("label");
+        labelDataCell.innerHTML = chains_dict[item]['rx_num'].toLocaleString()
+        layersDataCell.appendChild(labelDataCell)
+
+        layersDataRow.appendChild(layersDataCell)
+        layersDataCell = document.createElement("td");
+        labelDataCell = document.createElement("label");
+        labelDataCell.innerHTML = chains_dict[item]['delivery_population'].toLocaleString()
+        layersDataCell.appendChild(labelDataCell)
+        layersDataRow.appendChild(layersDataCell)
         // Setup the click event listener
         controlUI.addEventListener("click", function(e) {
             toggle_layer(controlUI.id, controlUI.checked)
         });
-        controlDiv.appendChild(document.createElement("br"))
+        layersDataTable.appendChild(layersDataRow)
       });
+      controlDiv.appendChild(layersDataTable)
     }
-  
+
     function toggle_layer(vendor, state){
       for (const [key, value] of Object.entries(chains_dict)) {
         if (value['vendor']==vendor){
@@ -1243,74 +1295,31 @@ function loadChains(chain, start, end) {
     }
   }
 
-  this.chainsInfoWindow = function(map, event, infowindow){
-    var population = event.feature.getProperty('delivery_population');
-    var vendor = event.feature.getProperty('vendor');
-
-    contentString = document.createElement("div");
-    table = document.createElement("table");
-    table.classList.add('GeoPopCoverage')
-    table_row = document.createElement("tr")
-    table_cell = document.createElement("th")
-    table_cell.innerHTML = vendor_data[vendor]['vendor_name']
-    table_cell.colSpan = 2
-    table_row.appendChild(table_cell)
-    table.appendChild(table_row)
-    table_row = document.createElement("tr")
-    table_cell = document.createElement("td")
-    table_cell.innerHTML = 'Population'
-    table_row.appendChild(table_cell)
-    table_cell = document.createElement("td")
-    table_cell.innerHTML = population.toLocaleString()
-    table_row.appendChild(table_cell)
-    table.appendChild(table_row)
-    contentString.appendChild(table)
-
-    var info_bounds = new google.maps.LatLngBounds();
-    var geometry = event.feature.getGeometry();
-  
-    geometry.forEachLatLng(function(point){
-      info_bounds.extend({
-        lat : point.lat(),
-        lng : point.lng()
-      });
-    });
-    var center = info_bounds.getCenter();
-  
-    // Create invisible marker for info window
-    var marker = new google.maps.Marker({
-      position: center,
-      map: map,
-      visible : false
-    });
-    // Create info window
-    infowindow.setContent(contentString);
-    infowindow.open(map, marker);
-  }
-
   $.getJSON('chainsboundary.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+'&chain='+chain, function (json) {
     for (feature in json['features']){
       geojson = json['features'][feature]
       vendor = json['features'][feature]['properties']['vendor']
       delivery_population = json['features'][feature]['properties']['delivery_population']
+      rx_num = json['features'][feature]['properties']['rx_num']
       
       chain_layer = new google.maps.Data({map: chains_map});
       chain_layer.addGeoJson(geojson);
-      chains_dict[vendor] = {'layer':chain_layer,'vendor':vendor}
+      chains_dict[vendor] = {
+        'layer':chain_layer,
+        'vendor':vendor,
+        'delivery_population':delivery_population,
+        'rx_num':rx_num
+      }
 
+      zoom = chains_map.getZoom()
       chain_layer.setStyle({
         fillColor: vendor_data[vendor]['vendor_colour'],
         fillOpacity: 0.5,
         strokeColor: 1,
-        strokeWeight: 3,
+        strokeWeight: zoom/4,
         zIndex: 1/delivery_population
       });
-
-      chain_layer.addListener('click', function(event) {
-        chainsInfoWindow(map, event, infowindow_chains);
-      }); 
     }
-     
     //fit the map to the bounds
     chain_bounds = new google.maps.LatLngBounds();
     for (chain_layer in chains_dict){        
