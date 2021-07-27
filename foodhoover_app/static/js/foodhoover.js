@@ -382,7 +382,7 @@ function loadTab(tab=tab_name) {
           country_map = initMap('country_map')
           $('.scene').hide()
           $('#country_scene').show()
-          country_map = countryMap(start, end);
+          country_map = countryMap(start, end, country_map);
           break;
       case 'chains':
           url.searchParams.delete('place_id');
@@ -718,15 +718,9 @@ function placeBoundaries(place_ids, map, start, end) {
   }
 
   this.render_places = function(json){
-    
-    window.fluff = json
 
     place_ids = Object.keys(json)
-
     place_ids.forEach(function (place_id, index) {
-
-      console.log(place_id)
-  
       //remove any existing markers
       if (place_details[place_id] !== undefined){
         if (place_details[place_id]['place_marker'] !== undefined){
@@ -775,8 +769,6 @@ function placeBoundaries(place_ids, map, start, end) {
       else{
         label_text = json[place_id]['place_details']['place_name'] + ' (No Data)'
       }
-
-      console.log(label_text)
 
       marker_latlng = new google.maps.LatLng(json[place_id]['place_details']['place_lat'], json[place_id]['place_details']['place_lng'])
       place_marker = new google.maps.Marker({
@@ -868,22 +860,20 @@ function placeBoundaries(place_ids, map, start, end) {
   setVisible('#loading', true);
   
   $.getJSON('deliveryboundary.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+"&place_id="+place_ids.join("&place_id="), function (json) {
-    //try{
-    render_places(json)
-    setVisible('#loading', false);
-    //}
-    //catch(err){
-    //  alert(err)
-    //  setVisible('#loading', false);
-    //}
+    try{
+      render_places(json)
+      setVisible('#loading', false);
+    }
+    catch(err){
+      setVisible('#loading', false);
+    }
   });   
   return 'done'
 }
 
 ///COUNTRY COVERAGE MAP
 
-function countryMap(start, end){
-  console.log('country map')
+function countryMap(start, end, map){
 
   function gethex(value, min_value, max_value) {
     if (value>min_value){
@@ -904,29 +894,48 @@ function countryMap(start, end){
     }
   }
 
-  this.CountryData = function(map, start, end) {
+  this.CountryData = function(start, end, map) {
     setVisible('#loading', true);
     infowindow_country.close()
     
-    map.data.forEach(function(feature) {
-      map.data.remove(feature);
-    });
+    if (Object.keys(coverage_layer).length !== 0){
+      coverage_layer.forEach(function(feature) {
+        coverage_layer.remove(feature);
+      });
+    }
 
     zoom = map.getZoom()
     bounds =  map.getBounds()
     var ne = bounds.getNorthEast();
     var sw = bounds.getSouthWest();
 
-    map.data.loadGeoJson('country.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+'&lngw='+sw.lng()+'&lats='+sw.lat()+'&lnge='+ne.lng()+'&latn='+ne.lat()+'&zoom='+zoom, null, function (features) {    
-      var chosen_vendor = document.querySelector('input[name="vendor_choice"]:checked').id
-      colourMap(map, chosen_vendor)
+    if (zoom>=10){
+      var granularity='sectors'
+    }
+    else{
+      var granularity='districts'
+    }
+
+    $.getJSON('country.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+'&lngw='+sw.lng()+'&lats='+sw.lat()+'&lnge='+ne.lng()+'&latn='+ne.lat()+'&granularity='+granularity, function (json) {    
+      coverage_layer = new google.maps.Data({map: map});
+      coverage_layer.addGeoJson(json['coverage']);
+      colourMap(coverage_layer, default_vendor)
+
+      //add the vendor selector
+      country_controller(map, json['stats'])
+
+        //listener for the infowindow
+      coverage_layer.addListener('click', function(event) {
+        createInfoWindow(map, event, infowindow_country); 
+      });
+      
       setVisible('#loading', false);
     });
     return map
   }
 
-  function colourMap(map, vendor_name){
-    map.data.setStyle(function(feature) {
+  function colourMap(coverage_layer, vendor_name){    
+    coverage_layer.setStyle(function(feature) {
       color = gethex(feature.getProperty(vendor_name),min_rx, max_rx)
       return /** @type {!google.maps.Data.StyleOptions} */({
         fillColor: color,
@@ -958,20 +967,34 @@ function countryMap(start, end){
     return legend
   };
 
-  function country_controller(map){
+  function country_controller(map, stats){
 
-    function CountryControl() {
-      formDiv = document.createElement("form")
-      for (vendor in vendor_data){
+    function LayerControl(controlDiv, stats) {
+      layersDataTable = document.createElement("table");
+      layersDataTable.classList.add('GeoPopCoverage')
+      layersDataRow = document.createElement("tr");
+      layersDataCell = document.createElement("th");
+      layersDataCell.innerHTML = ''
+      layersDataRow.appendChild(layersDataCell)
+      layersDataCell = document.createElement("th");
+      layersDataCell.innerHTML = 'Number of <p>Restaurants';
+      layersDataRow.appendChild(layersDataCell)
+      layersDataCell = document.createElement("th");
+      layersDataCell.innerHTML = 'Delivery <p>Population';
+      layersDataRow.appendChild(layersDataCell)
+      layersDataTable.appendChild(layersDataRow)
+
+      for (var vendor in stats){
+        layersDataRow = document.createElement("tr");
+        layersDataCell = document.createElement("td");
         // Build the checkboxes and labels
-        para = document.createElement("p");
         const controlUI = document.createElement("input");
         controlUI.type="radio";
         controlUI.name="vendor_choice"
         controlUI.checked=(default_vendor==vendor);
         controlUI.id=vendor;
         controlUI.zoom = 3.5;
-        para.appendChild(controlUI)
+        layersDataCell.appendChild(controlUI);
         const labelUI = document.createElement("label");
         labelUI.for=vendor;
         labelUI.innerHTML=vendor_data[vendor]['vendor_name'];
@@ -979,46 +1002,78 @@ function countryMap(start, end){
         labelUI.style.fontFamily = "Roboto,Arial,sans-serif";
         labelUI.style.fontSize = "18px";
         labelUI.style.lineHeight = "25px";
-        labelUI.style.paddingLeft = "10px"; 
-        para.appendChild(labelUI);
-        formDiv.appendChild(para)
+        labelUI.style.paddingLeft = "10px";
+        layersDataCell.appendChild(labelUI);
+        layersDataCell.style.textAlign = 'left';
+        layersDataRow.appendChild(layersDataCell)
+
+        layersDataCell = document.createElement("td");
+        labelDataCell = document.createElement("label");
+        labelDataCell.innerHTML = stats[vendor]['rx_num'].toLocaleString()
+        layersDataCell.appendChild(labelDataCell)
+
+        layersDataRow.appendChild(layersDataCell)
+        layersDataCell = document.createElement("td");
+        labelDataCell = document.createElement("label");
+        labelDataCell.innerHTML = stats[vendor]['delivery_population'].toLocaleString()
+        layersDataCell.appendChild(labelDataCell)
+        layersDataRow.appendChild(layersDataCell)
         // Setup the click event listener
         controlUI.addEventListener("click", function(e) {
-            colourMap(map, controlUI.id)
+          colourMap(coverage_layer, controlUI.id)
         });
+        layersDataTable.appendChild(layersDataRow)
       }
-  
-      return formDiv
+      controlDiv.appendChild(layersDataTable)
     }
   
     map.controls[google.maps.ControlPosition.TOP_RIGHT].clear()
-    countryControlDiv = document.createElement("div");
-    countryControlDiv.style.backgroundColor = "#fff";
-    countryControlDiv.style.border = "2px solid #fff";
-    countryControlDiv.style.borderRadius = "3px";
-    countryControlDiv.style.boxShadow = "0 2px 6px rgba(0,0,0,.3)";
-    countryControlDiv.style.cursor = "pointer";
-    countryControlDiv.style.marginTop = "10px";
-    countryControlDiv.style.marginRight = "10px";
-    countryControlDiv.style.textAlign = "left";
-    countryControlDiv.style.padding = "10px";
-    formDiv = CountryControl();
-    countryControlDiv.appendChild(formDiv);
-    
-    return countryControlDiv
+      const layerControlDiv = document.createElement("div");
+      layerControlDiv.style.backgroundColor = "#fff";
+      layerControlDiv.style.border = "2px solid #fff";
+      layerControlDiv.style.borderRadius = "3px";
+      layerControlDiv.style.boxShadow = "0 2px 6px rgba(0,0,0,.3)";
+      layerControlDiv.style.cursor = "pointer";
+      layerControlDiv.style.marginTop = "10px";
+      layerControlDiv.style.marginRight = "10px";
+      layerControlDiv.style.textAlign = "left";
+      layerControlDiv.style.padding = "10px";
+      LayerControl(layerControlDiv, stats);
+      map.controls[google.maps.ControlPosition.TOP_RIGHT].push(layerControlDiv);
   }
 
   function createInfoWindow(map, event, infowindow){
-    var infowindow_content = document.createElement("div");
-    var infowindow_heading = document.createElement("h2")
-    infowindow_heading.innerText = event.feature.getProperty('postcode_name');
-    infowindow_content.appendChild(infowindow_heading)
+
+    contentString = document.createElement("div");
+    h = document.createElement("H2") 
+    h.style.marginLeft = '10px'
+    h.innerHTML = event.feature.getProperty('postcode_name')
+    contentString.appendChild(h)
+
+    table = document.createElement("table");
+    table.classList.add('PlacePopCoverage')
+    table_row = document.createElement("tr")
+    table_cell = document.createElement("th")
+    table_cell.innerHTML =  'Restaurants Open'
+    table_cell.fontSize = 30;
+    table_cell.colSpan = 2
+    table_row.appendChild(table_cell)
+    table.appendChild(table_row)
+    
     for (vendor in vendor_data){
-      vendor_counts = document.createElement("p")
       vendor_open = event.feature.getProperty(vendor);
-      vendor_counts.innerText = vendor_data[vendor]['vendor_name'] + ' ' + vendor_open
-      infowindow_content.appendChild(vendor_counts)
+      table_row = document.createElement("tr")
+      table_cell = document.createElement("td")
+      table_cell.innerHTML = vendor_data[vendor]['vendor_name']
+      table_row.appendChild(table_cell)
+      table_cell = document.createElement("td")
+      table_cell.innerHTML = vendor_open = event.feature.getProperty(vendor).toLocaleString()
+      table_row.style.color = vendor_data[vendor]['vendor_colour']
+      table_row.appendChild(table_cell)
+      table.appendChild(table_row)
     }
+
+    contentString.appendChild(table)
 
     var infowindow_bounds = new google.maps.LatLngBounds();
     var geometry = event.feature.getGeometry();
@@ -1035,10 +1090,11 @@ function countryMap(start, end){
     var marker = new google.maps.Marker({
       position: center,
       map: map,
-      visible : false
+      visible : false,
+      zIndex: 9999
     });
     // Create info window
-    infowindow.setContent(infowindow_content);
+    infowindow.setContent(contentString);
     
     info_window_loading = true
     infowindow.open(map, marker);
@@ -1046,10 +1102,6 @@ function countryMap(start, end){
         info_window_loading = false; 
       }, 2000);
   }
-
-  //add the vendor selector
-  countryControlDiv = country_controller(map)
-  map.controls[google.maps.ControlPosition.TOP_RIGHT].push(countryControlDiv);
 
   //wait for tiles to load then trigger the geodata load
   google.maps.event.addListener(map, 'idle', (function () {
@@ -1059,15 +1111,16 @@ function countryMap(start, end){
         timer = setTimeout(function() {
           console.log('resize');
           if (!info_window_loading){
-            CountryData(map, start, end);
+            if (map.getZoom()>=10){
+              CountryData(start, end, map);
+            }
           }
         }, 500);
     }
   }()));
 
-  //listener for the infowindow
-  map.data.addListener('click', function(event) {
-    createInfoWindow(map, event, infowindow_country); 
+  google.maps.event.addListenerOnce(map, 'idle', function(){
+    map = CountryData(start, end, map)
   });
 
   //add the legend

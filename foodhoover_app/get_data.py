@@ -9,13 +9,13 @@ import uuid
 import json
 from datetime import timedelta
 
-def get_country_data(start, end, lngw, lats, lnge, lngn, zoom):
-    if zoom<11:
-        sql = text("  \
+def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
+    if granularity=='districts':
+        sql = text("\
             SELECT jsonb_build_object( \
             'type',     'FeatureCollection', \
             'features', jsonb_agg(districts.feature) \
-            ) as geometry \
+            ) as geometry\
             FROM ( \
                 SELECT \
                     postcode_district, \
@@ -43,10 +43,9 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, zoom):
                     AND geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn) \
                     GROUP by b.district \
                 ) as agg \
-            ) as districts \
+            ) as districts\
         ")
-
-    else:
+    elif granularity=='sectors':
         sql = text("  \
             SELECT jsonb_build_object( \
             'type',     'FeatureCollection', \
@@ -81,12 +80,33 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, zoom):
                 ) as agg \
             ) as sectors \
         ")
+    else:
+        return 'granularity not specified'
 
     engine = get_sql_client('foodhoover_cache')
     conn = engine.connect()
     result = conn.execute(sql, start=start, end=end, lngw=lngw, lats=lats, lnge=lnge, lngn=lngn)
     coverage_map = result.fetchone()['geometry']
-    return coverage_map
+
+    sql = text("\
+        SELECT vendor,jsonb_build_object(\
+            'delivery_population',MAX(delivery_population),\
+            'rx_num', MAX(rx_num)\
+            ) as country_stats\
+        FROM agg_country_run_pop\
+        WHERE scrape_time>=:start AND scrape_time<=:end\
+        GROUP BY vendor\
+    ")
+
+    engine = get_sql_client('foodhoover_cache')
+    conn = engine.connect()
+    result = conn.execute(sql, start=start, end=end)
+
+    country_stats = {}
+    for r in result:
+        country_stats[r['vendor']]=r['country_stats']
+
+    return {'coverage':coverage_map,'stats':country_stats}
 
 def get_geo_objects(lngw, lats, lnge, lngn):
     sql = text("  \

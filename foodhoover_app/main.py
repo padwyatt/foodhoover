@@ -82,8 +82,8 @@ def country_data():
     lats = request.args.get('lats')
     lnge = request.args.get('lnge')
     latn = request.args.get('latn')
-    zoom = int(request.args.get('zoom'))
-    return get_country_data(start, end, lngw, lats, lnge, latn, zoom)
+    granularity = request.args.get('granularity')
+    return jsonify(get_country_data(start, end, lngw, lats, lnge, latn, granularity))
 
 @app.route('/deliveryboundary.json')
 def delivery_boundary():
