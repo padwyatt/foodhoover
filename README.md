@@ -1,16 +1,16 @@
 <h1> Foodhoover </h1>
 
-Project to extract and visualise public delivery coverage from the main UK food delivery services (UberEats, JustEat, Foodhub, Deliveroo)
+Project to extract and visualise public delivery coverage from the main UK food delivery services (UberEats, JustEat, Foodhub, Deliveroo)  
 https://foodhoover.patrickwyatt.org/
 
 ## Population coverage of aggregators
-What is the overall population coverage of each of the aggregators? How many restaurants do they have in a particular area? Zoom the map to see the data at postcode sector level (around 5000 people).
+What is the overall population coverage of each of the aggregators? How many restaurants do they have in a particular area? Zoom the map to see the data at postcode sector level (around 5000 people).  
 https://foodhoover.patrickwyatt.org/aggregator
 
 ![Alt text](/foodhoover_app/static/info/aggregator.png?raw=true "Aggregator view")
 
 ## Delivery areas and population coverage of restaurants
-Where do individial restaurants deliver? How do the delivery areas and population coverage of the different aggregators vary? Add restaurants to the map by searching by name.
+Where do individial restaurants deliver? How do the delivery areas and population coverage of the different aggregators vary? Add restaurants to the map by searching by name.  
 https://foodhoover.patrickwyatt.org/restaurant?place_id=ChIJZ1Qa0G8QdkgRaUG_c76GXiA
 
 ![Alt text](/foodhoover_app/static/info/restaurant.png?raw=true "Restaurant view")
@@ -20,7 +20,7 @@ It's also possible to do a real-time query for a small area! Click on the lightn
 ![Alt text](/foodhoover_app/static/info/restaurant-flash.png?raw=true "Real time view")
 
 ## Delivery areas and population coverage of restaurant chains
-For restaurant chains (i.e. Pizza Hut), we want to see the delivery coverage of all their restaurants taken together. Search by a keyword to find all the restaurants with matching names.
+For restaurant chains (i.e. Pizza Hut), we want to see the delivery coverage of all their restaurants taken together. Search by a keyword to find all the restaurants with matching names.  
 https://foodhoover.patrickwyatt.org/chain?chain=German+Doner+Kebab
 
 ![Alt text](/foodhoover_app/static/info/chain.png?raw=true "Chains view")
