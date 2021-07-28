@@ -3,14 +3,15 @@
 Project to extract and visualise public delivery coverage from the main UK food delivery services (UberEats, JustEat, Foodhub, Deliveroo)
 https://foodhoover.patrickwyatt.org/
 
-
 ## Population coverage of aggregators
 What is the overall population coverage of each of the aggregators? How many restaurants do they have in a particular area? Zoom the map to see the data at postcode sector level (around 5000 people).
+https://foodhoover.patrickwyatt.org/aggregator
 
 ![Alt text](/foodhoover_app/static/info/aggregator.png?raw=true "Aggregator view")
 
 ## Delivery areas and population coverage of restaurants
 Where do individial restaurants deliver? How do the delivery areas and population coverage of the different aggregators vary? Add restaurants to the map by searching by name.
+https://foodhoover.patrickwyatt.org/restaurant?place_id=ChIJZ1Qa0G8QdkgRaUG_c76GXiA
 
 ![Alt text](/foodhoover_app/static/info/restaurant.png?raw=true "Restaurant view")
 
@@ -20,17 +21,19 @@ It's also possible to do a real-time query for a small area! Click on the lightn
 
 ## Delivery areas and population coverage of restaurant chains
 For restaurant chains (i.e. Pizza Hut), we want to see the delivery coverage of all their restaurants taken together. Search by a keyword to find all the restaurants with matching names.
+https://foodhoover.patrickwyatt.org/chain?chain=German+Doner+Kebab
 
 ![Alt text](/foodhoover_app/static/info/chain.png?raw=true "Chains view")
 
 ## Limitations and things to know
 
-*Data is queried by postcode, at the postcode that is closest to the centroid of each of 9,232 GB postcode sectors (Northern Ireland is not yet included)
-*Full imports for all sectors run daily at 6PM UK time
-*Often, the same restaurant will appear on multiple aggregators. It may also appear on the same aggregator under different names (i.e. if there are multiple brands operating from the same site). Foodhoover attempts to link together these entities, principally by associating them with a Google Places ID. This can occasionally go wrong!
-*JustEat's McDonald's restaurants do not appear in Foodhoover
+* Data is queried by postcode, at the postcode that is closest to the centroid of each of 9,232 GB postcode sectors (Northern Ireland is not yet included)
+* Full imports for all sectors run daily at 6PM UK time
+* Often, the same restaurant will appear on multiple aggregators. It may also appear on the same aggregator under different names (i.e. if there are multiple brands operating from the same site). Foodhoover attempts to link together these entities, principally by associating them with a Google Places ID. This can occasionally go wrong!
+* Restaurant counts are, following the logic above, counts of unique sites, not aggregator listings (which is a slightly higher number)
+* JustEat's McDonald's restaurants do not appear in Foodhoover
 
-## Technicalities
+## Technicalities and data
 
 This project contains four modules
 1. **Loader:** 
@@ -48,4 +51,3 @@ This project contains four modules
 
 Static files (postocde lookup and shapefiles) which belong inside the Loader module can be downloaded from: 
 https://storage.googleapis.com/foodhoover-static/
-
