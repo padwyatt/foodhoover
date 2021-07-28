@@ -13,3 +13,8 @@
 #####cosmetics
 ###stop exporting rx_cx_full, and clean up storage
 ###see if we can move some of the geo cleanup out of the queries and into BQ (like simplify, snaptogrid, st_dump)
+
+
+###
+##remove latlng filter from districts map
+##redraw on zoom out to districts level

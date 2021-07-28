@@ -378,7 +378,9 @@ function loadTab(tab=tab_name) {
           window.history.pushState({}, '', url);
 
           infowindow_country = new google.maps.InfoWindow();
-          bounds = new google.maps.LatLngBounds()
+          bounds = new google.maps.LatLngBounds();
+          coverage_bounds =  new google.maps.LatLngBounds();
+          layer_bounds = new google.maps.LatLngBounds();
           country_map = initMap('country_map')
           $('.scene').hide()
           $('#country_scene').show()
@@ -743,7 +745,7 @@ function placeBoundaries(place_ids, map, start, end) {
       for (row in json[place_id]['place_map']['features']){
         if (json[place_id]['place_map']['features'][row]['geometry'] !== null){
           vendor = json[place_id]['place_map']['features'][[row]]['properties']['vendor'];
-          rx_uid = json[place_id]['place_map']['features'][[row]]['properties']['rx_uid'];
+          place_vendor_id = json[place_id]['place_map']['features'][[row]]['properties']['place_vendor_id'];
           delivery_area = json[place_id]['place_map']['features'][[row]]['properties']['delivery_area'];
           delivery_population = json[place_id]['place_map']['features'][[row]]['properties']['delivery_population'];
 
@@ -758,7 +760,7 @@ function placeBoundaries(place_ids, map, start, end) {
             zIndex: 1/delivery_area
           });
 
-          layers_dict[rx_uid] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor, 'delivery_area':delivery_area, 'delivery_population': delivery_population}
+          layers_dict[place_vendor_id] = {'layer':rx_layer, 'place_id':place_id, 'vendor':vendor, 'delivery_area':delivery_area, 'delivery_population': delivery_population}
         }
       }
 
@@ -909,16 +911,18 @@ function countryMap(start, end, map){
     var ne = bounds.getNorthEast();
     var sw = bounds.getSouthWest();
 
-    if (zoom>=10){
-      var granularity='sectors'
+    if (zoom>=11){
+      window.granularity='sectors'
     }
     else{
-      var granularity='districts'
+      window.granularity='districts'
     }
 
     $.getJSON('country.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+'&lngw='+sw.lng()+'&lats='+sw.lat()+'&lnge='+ne.lng()+'&latn='+ne.lat()+'&granularity='+granularity, function (json) {    
       coverage_layer = new google.maps.Data({map: map});
       coverage_layer.addGeoJson(json['coverage']);
+      coverage_bounds =  map.getBounds()
+
       colourMap(coverage_layer, default_vendor)
 
       //add the vendor selector
@@ -977,10 +981,10 @@ function countryMap(start, end, map){
       layersDataCell.innerHTML = ''
       layersDataRow.appendChild(layersDataCell)
       layersDataCell = document.createElement("th");
-      layersDataCell.innerHTML = 'Number of <p>Restaurants';
+      layersDataCell.innerHTML = 'Number of<br>Restaurants';
       layersDataRow.appendChild(layersDataCell)
       layersDataCell = document.createElement("th");
-      layersDataCell.innerHTML = 'Delivery <p>Population';
+      layersDataCell.innerHTML = 'Population<br>Coverage';
       layersDataRow.appendChild(layersDataCell)
       layersDataTable.appendChild(layersDataRow)
 
@@ -1108,10 +1112,11 @@ function countryMap(start, end, map){
     var timer;
     return function() {
         clearTimeout(timer);
-        timer = setTimeout(function() {
-          console.log('resize');
+        timer = setTimeout(function() {          
           if (!info_window_loading){
-            if (map.getZoom()>=10){
+            coverage_layer_fills_map = (coverage_bounds.contains(country_map.getBounds().getNorthEast()) && coverage_bounds.contains(country_map.getBounds().getSouthWest())) 
+            console.log(coverage_layer_fills_map)
+            if (((country_map.getZoom()>=11 && granularity=='districts') || (country_map.getZoom()<=10 && granularity=='sectors')) || ((!coverage_layer_fills_map) && (granularity=='sectors'))){ 
               CountryData(start, end, map);
             }
           }
@@ -1270,10 +1275,10 @@ function loadChains(chain, start, end) {
       layersDataCell.innerHTML = ''
       layersDataRow.appendChild(layersDataCell)
       layersDataCell = document.createElement("th");
-      layersDataCell.innerHTML = 'Number of <p>Restaurants';
+      layersDataCell.innerHTML = 'Number of<br>Restaurants';
       layersDataRow.appendChild(layersDataCell)
       layersDataCell = document.createElement("th");
-      layersDataCell.innerHTML = 'Delivery <p>Population';
+      layersDataCell.innerHTML = 'Population<br>Coverage';
       layersDataRow.appendChild(layersDataCell)
       layersDataTable.appendChild(layersDataRow)
 

@@ -698,36 +698,31 @@ def bq_agg_rx_cx(run_id):
         client.delete_table(table_id, not_found_ok=True)
 
         sql = "\
-            CREATE TABLE "+table_id+"\
+            CREATE TABLE rooscrape.foodhoover_store.agg_rx_cx\
             CLUSTER BY\
-            rx_uid\
+            place_id\
             AS\
             SELECT\
-                ref.rx_uid,\
-                ref.vendor,\
-                zones.delivery_zone,\
-                zones.delivery_population,\
                 places.place_id,\
-                places.place_name,\
-                places.place_lat,\
-                places.place_lng,\
-                zones.sectors_covered\
+                ref.vendor,\
+                ST_SIMPLIFY(ST_UNION_AGG(sectors.geometry),50) as delivery_zone,\
+                SUM(sectors.population) as delivery_population,\
+                max(places.place_name) as place_name,\
+                max(places.place_lat) as place_lat,\
+                max(places.place_lng) as place_lng,\
+                ARRAY_AGG(DISTINCT(ref.rx_uid) IGNORE NULLS) as vendor_rx,\
+                ARRAY_AGG(DISTINCT(postcode_sector) IGNORE NULLS) as sectors_covered\
             FROM (\
-                SELECT\
-                    results.rx_uid,\
-                    ST_SIMPLIFY(ST_SNAPTOGRID(ST_UNION_AGG(sectors.geometry),0.0001),50) as delivery_zone,\
-                    SUM(sectors.population) as delivery_population,\
-                    ARRAY_AGG(DISTINCT(postcode_sector)) as sectors_covered\
-                FROM (\
-                    SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                    WHERE scrape_time>='"+start_date+"' and scrape_time<='"+end_date+"'\
-                    GROUP BY rx_uid, cx_postcode) results\
-                LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
-                LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
-                GROUP BY results.rx_uid) zones\
-            RIGHT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = zones.rx_uid\
+                SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
+                WHERE scrape_time>='"+start_date+"' and scrape_time<='"+end_date+"'\
+                GROUP BY rx_uid, cx_postcode) results\
+            LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
+            LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
+            RIGHT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
             LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
-            "
+            GROUP BY places.place_id, ref.vendor\
+        "
+
         query_job = client.query(sql)  # API request
         rows = query_job.result()
 
@@ -1050,8 +1045,8 @@ def bq_export_agg_rx_cx(run_id):
     try:
         bq_table = 'rooscrape.foodhoover_store.agg_rx_cx'
         sql_table = 'agg_rx_cx'
-        sql_schema = ['rx_uid', 'vendor', 'delivery_zone','delivery_population','place_id','place_name','place_lat','place_lng','sectors_covered']
-        bq_select_sql = "SELECT rx_uid, vendor,  TO_HEX(ST_ASBINARY(delivery_zone)) as delivery_zone, delivery_population,place_id,place_name,place_lat,place_lng, REPLACE(REPLACE(TO_JSON_STRING(sectors_covered),'[','{'),']','}') as sectors_covered FROM rooscrape.foodhoover_store.agg_rx_cx"
+        sql_schema = ['place_id', 'vendor', 'delivery_zone','delivery_population','place_name','place_lat','place_lng','vendor_rx', 'sectors_covered']
+        bq_select_sql = "SELECT place_id, vendor, TO_HEX(ST_ASBINARY(delivery_zone)) as delivery_zone, delivery_population,place_name,place_lat,place_lng, REPLACE(REPLACE(TO_JSON_STRING(vendor_rx),'[','{'),']','}') as vendor_rx, REPLACE(REPLACE(TO_JSON_STRING(sectors_covered),'[','{'),']','}') as sectors_covered FROM rooscrape.foodhoover_store.agg_rx_cx"
         sql_create_statement = "table_schemas/agg_rx_cx"
 
         status = generic_exporter(run_id, bq_table, sql_table, sql_schema, bq_select_sql, sql_create_statement,'overwrite')

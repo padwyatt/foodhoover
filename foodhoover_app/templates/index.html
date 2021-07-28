@@ -154,12 +154,19 @@
             border-collapse: separate;
         }
         .GeoPopCoverage{
-            border-spacing: 10px;
+            border-spacing: 2px;
             border-collapse: separate;
+            font-size: clamp(10px, 2vmin, 18px);
         }
         .GeoPopCoverage td, .GeoPopCoverage th{
-            line-height: 25px;
             margin-bottom: 5px;
+            display: table-cell;
+            text-align: center;
+        }
+
+        .GeoPopCoverage th{
+            margin-bottom: 5px;
+            padding-bottom: 10px;
             display: table-cell;
             text-align: center;
         }
@@ -286,6 +293,7 @@
     var default_vendor='ROO'
     var info_window_loading = false
     var tab_name = '{{tab_name}}'
+    var granularity = 'districts' //sets initial granularity of data on country map
 
     var vendor_data = {
         'ROO' : {vendor_colour:'green', vendor_name : 'Deliveroo'},
@@ -304,6 +312,7 @@
     var chains_dict = {}
     var geo_layer = {}
     var coverage_layer = {}
+    var coverage_bounds = {}
     var bounds = {}
     var infowindow_resto = {}
     var infowindow_country = {}
@@ -339,7 +348,7 @@
                 }
                 break;
             case 'country':
-                country_map = CountryData(country_map, start, end);
+                country_map = CountryData(start, end, country_map);
                 break;
             case 'chains':
                 loadChains(chain, start, end);

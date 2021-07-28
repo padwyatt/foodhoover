@@ -40,7 +40,6 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
                     FROM agg_district_run a \
                     INNER JOIN districts b ON a.postcode_district=b.district \
                     WHERE a.scrape_time>=:start and a.scrape_time<=:end \
-                    AND geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn) \
                     GROUP by b.district \
                 ) as agg \
             ) as districts\
@@ -209,14 +208,14 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                 'place_lng', max(places.place_lng),\
                 'entities', array_to_json(\
                     array_agg(\
-                        jsonb_build_object('places',places.rx_uid,'rx_name',places.place_name,'vendor',places.vendor)\
+                        jsonb_build_object('place_vendor_id',CONCAT(places.place_id,'-',places.vendor),'rx_name',places.place_name,'vendor',places.vendor)\
                     )\
                 )\
             ) as place_details,\
-        jsonb_build_object(\
-            'type',     'FeatureCollection',\
-            'features', jsonb_agg(places.feature)\
-        ) as geometry\
+            jsonb_build_object(\
+                'type',     'FeatureCollection',\
+                'features', jsonb_agg(places.feature)\
+            ) as geometry\
         FROM (\
             SELECT\
             place_id,\
@@ -224,14 +223,13 @@ def get_delivery_boundary(start, end, place_ids, last_update):
             place_lat,\
             place_lng,\
             vendor,\
-            rx_uid,\
             jsonb_build_object(\
                 'type', 'Feature',\
-                'id', rx_uid,\
+                'id', CONCAT(place_id,'-',vendor),\
                 'geometry', ST_AsGeoJSON(delivery_zone)::jsonb,\
                 'properties', to_jsonb(\
                     jsonb_build_object(\
-                        'rx_uid', rx_uid,\
+                        'place_vendor_id', CONCAT(place_id,'-',vendor),\
                         'vendor', vendor,\
                         'delivery_area',  COALESCE(ST_AREA(ST_TRANSFORM(ST_SetSRID(delivery_zone,4326), 31467))/1000000,0),\
                         'delivery_population', COALESCE(delivery_population,0),\
@@ -260,7 +258,7 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                     MAX(places.place_lng) as place_lng,\
                     array_agg(\
                         STRUCT(\
-                            places.rx_uid as places,\
+                            CONCAT(places.place_id,'-',places.vendor) as place_vendor_id,\
                             places.place_name as rx_name,\
                             places.vendor as vendor\
                             )\
@@ -277,13 +275,12 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                     place_lat,\
                     place_lng,\
                     vendor,\
-                    rx_uid,\
                     STRUCT(\
                         'Feature' AS type,\
-                        rx_uid AS id,\
+                        CONCAT(place_id,'-',vendor) AS id,\
                         ST_ASGEOJSON(delivery_zone) as geometry,\
                         STRUCT(\
-                            rx_uid,\
+                            CONCAT(place_id,'-',vendor) as place_vendor_id,\
                             vendor,\
                             place_id,\
                             ST_AREA(delivery_zone)/1000000 as delivery_area,\
@@ -293,39 +290,32 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                     ) as feature\
                 FROM (\
                     SELECT\
-                        ref.rx_uid,\
-                        ref.vendor,\
-                        zones.delivery_zone,\
-                        zones.delivery_population,\
                         places.place_id,\
-                        places.place_name,\
-                        places.place_lat,\
-                        places.place_lng,\
-                        zones.sectors_covered\
+                        ref.vendor,\
+                        ST_SIMPLIFY(ST_SNAPTOGRID(ST_UNION_AGG(sectors.geometry),0.0001),50) as delivery_zone,\
+                        SUM(sectors.population) as delivery_population,\
+                        MAX(places.place_name) as place_name,\
+                        MAX(places.place_lat) as place_lat,\
+                        MAX(places.place_lng) as place_lng\
                     FROM (\
-                        SELECT\
-                            results.rx_uid,\
-                            ST_SIMPLIFY(ST_SNAPTOGRID(ST_UNION_AGG(sectors.geometry),0.0001),50) as delivery_zone,\
-                            SUM(sectors.population) as delivery_population,\
-                            ARRAY_AGG(DISTINCT(postcode_sector)) as sectors_covered\
-                        FROM (\
-                            SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                            WHERE scrape_time>=@start and scrape_time<=@end\
-                            AND rx_uid IN(\
-                                SELECT distinct(rx_uid) from rooscrape.foodhoover_store.rx_ref\
-                                WHERE hoover_place_id IN UNNEST(@place_ids)\
-                                )\
-                            GROUP BY rx_uid, cx_postcode) results\
-                        LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
-                        LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
-                        GROUP BY results.rx_uid) zones\
-                    LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = zones.rx_uid\
+                        SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
+                        WHERE scrape_time>=@start and scrape_time<=@end\
+                        AND rx_uid IN(\
+                            SELECT distinct(rx_uid) from rooscrape.foodhoover_store.rx_ref\
+                            WHERE hoover_place_id IN UNNEST(@place_ids)\
+                            )\
+                        GROUP BY rx_uid, cx_postcode) results\
+                    LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
+                    LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
+                    LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
                     LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
+                    GROUP BY places.place_id, ref.vendor\
                 ) agg_rx_cx\
             ) as places\
             GROUP BY places.place_id\
         ) final\
     "
+
     max_cache = last_update
     min_cache = max_cache - timedelta(days=14)
     max_cache = max_cache.strftime('%Y-%m-%d')
@@ -374,10 +364,8 @@ def get_delivery_boundary(start, end, place_ids, last_update):
 def get_flash_boundary(start, end, place_id, run_id):
 
     sql = text("  \
-            SELECT rx_uid, jsonb_build_object( \
-                'type',     'FeatureCollection', \
-                'features', jsonb_agg(features.feature) \
-            ) as geometry \
+            SELECT rx_uid,\
+            jsonb_agg(features.feature) as geometry \
             FROM ( \
                 SELECT \
                     z.rx_uid, \
@@ -387,11 +375,11 @@ def get_flash_boundary(start, end, place_id, run_id):
                         'geometry', ST_AsGeoJSON(ST_ForcePolygonCW(ST_BuildArea(ST_UNION(z.geometry))))::jsonb, \
                         'properties', to_jsonb( \
                             jsonb_build_object( \
-                                'rx_uid', z.rx_uid, \
+                                'place_vendor_id', z.rx_uid, \
                                 'vendor', MAX(rx_ref.vendor), \
                                 'delivery_area',  ST_AREA(ST_TRANSFORM(ST_UNION(z.geometry), 31467))/1000000,\
                                 'delivery_population', SUM(population), \
-                                'place_id', MAX(COALESCE(rx_ref.place_id, z.rx_uid)) \
+                                'place_id', MAX(rx_ref.hoover_place_id) \
                             ) \
                         )\
                     ) as feature \
@@ -402,7 +390,7 @@ def get_flash_boundary(start, end, place_id, run_id):
                     MAX(sectors.population) as population, \
                     ST_MakeValid(MAX(geometry)) AS geometry \
                     FROM \
-                    rx_cx_fast \
+                    rx_cx_fast_flash rx_cx_fast\
                     LEFT JOIN \
                     postcode_lookup \
                     ON \
@@ -416,11 +404,8 @@ def get_flash_boundary(start, end, place_id, run_id):
                     AND rx_uid IN( \
                     SELECT \
                         rx_uid \
-                    FROM \
-                        rx_ref \
-                    WHERE \
-                        place_id=:s \
-                        OR rx_uid=:s) \
+                    FROM rx_ref \
+                    WHERE hoover_place_id=:place_id) \
                     AND sectors.geometry IS NOT NULL \
                     GROUP BY \
                     postcode_sector, \
@@ -433,13 +418,22 @@ def get_flash_boundary(start, end, place_id, run_id):
 
     engine = get_sql_client('foodhoover_cache')
     conn = engine.connect()
-    result = conn.execute(sql, s=place_id, start=start, end=end, run_id=run_id)
-    resto_map = [row['geometry'] for row in result]
+    result = conn.execute(sql, place_id=place_id, run_id=run_id)
+
+    try:
+        resto_map = {'features' : [r['geometry'][0] for r in result]}
+    except:
+        resto_map = []
+
     place_details = get_restaurant_details([place_id])
 
-    return {
-        'place_details': place_details,
-        'place_map' : resto_map } 
+    place_boundary = {}
+    place_boundary[place_id] = {
+        'place_details':  place_details[place_id],
+        'place_map' : resto_map
+    }
+
+    return place_boundary
 
 def get_rx_names(search, lat, lng):
 
@@ -557,7 +551,7 @@ def get_chains_boundary(chain, start, end, last_update):
             (SELECT\
                 vendor,\
                 ST_SIMPLIFY(ST_UNION(ST_CollectionExtract(ST_MAKEVALID(delivery_zone),3)),0.001) as delivery_area,\
-                COUNT(DISTINCT rx_uid) as rx_num\
+                COUNT(DISTINCT place_id) as rx_num\
             FROM agg_rx_cx\
             WHERE UPPER(place_name) LIKE UPPER(:chain)\
             GROUP BY vendor) results ON results.vendor=pop_stats.vendor\
