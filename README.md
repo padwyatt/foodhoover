@@ -3,6 +3,9 @@
 Project to extract and visualise coverage data from food delivery services (UberEats, JustEat, Foodhub, Deliveroo)
 http://rooscrape.nw.r.appspot.com/
 
+
+![Alt text](/foodhoover_app/static/info/aggregator.png?raw=true "Aggregator view")
+
 This project contains four modules
 
 1. **Loader:** 
