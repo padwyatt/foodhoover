@@ -12,37 +12,37 @@ from datetime import timedelta
 def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
     if granularity=='districts':
         sql = text("\
-            SELECT jsonb_build_object( \
-            'type',     'FeatureCollection', \
-            'features', jsonb_agg(districts.feature) \
-            ) as geometry\
-            FROM ( \
-                SELECT \
-                    postcode_district, \
-                    jsonb_build_object( \
-                        'type',       'Feature', \
-                        'id',         postcode_district, \
-                        'geometry',   ST_AsGeoJSON(ST_SIMPLIFY(ST_ForcePolygonCW(agg.geometry),0.001))::jsonb, \
-                        'properties', to_jsonb( \
-                            jsonb_build_object( \
-                                'postcode_name', agg.postcode_district, \
-                                'ROO', agg.roo, 'JE',agg.je, 'UE',agg.ue, 'FH',agg.fh \
-                            ) \
-                        ) \
-                    ) as feature \
-                FROM ( \
-                    SELECT b.district as postcode_district, \
-                    max(ST_CollectionExtract(ST_SnapToGrid(b.geometry,0.001),3)) as geometry, \
-                    MAX(a.roo) as roo, \
-                    MAX(a.je) as je, \
-                    MAX(a.ue) as ue, \
-                    MAX(a.fh) as fh \
-                    FROM agg_district_run a \
-                    INNER JOIN districts b ON a.postcode_district=b.district \
-                    WHERE a.scrape_time>=:start and a.scrape_time<=:end \
-                    GROUP by b.district \
-                ) as agg \
-            ) as districts\
+            SELECT jsonb_build_object(\
+                'type',     'FeatureCollection',\
+                'features', jsonb_agg(feature)\
+                ) as geometry\
+            FROM (\
+                SELECT\
+                    districts.district,\
+                    jsonb_build_object(\
+                        'type',       'Feature',\
+                        'id',         districts.district,\
+                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(districts.geometry,0.001)),3))::jsonb,\
+                        'properties', to_jsonb(\
+                            jsonb_build_object(\
+                                'postcode_name', districts.district,\
+                                'ROO', counts.roo, 'JE',counts.je, 'UE',counts.ue, 'FH',counts.fh\
+                            )\
+                        )\
+                    ) as feature\
+                    FROM districts\
+                    LEFT JOIN\
+                        (SELECT\
+                            postcode_district,\
+                            MAX(roo) as roo,\
+                            MAX(je) as je,\
+                            MAX(ue) as ue,\
+                            MAX(fh) as fh\
+                        FROM agg_district_run z\
+                        WHERE scrape_time>=:start and scrape_time<=:end\
+                        GROUP by postcode_district) counts\
+                    ON counts.postcode_district=districts.district\
+            ) agg\
         ")
     elif granularity=='sectors':
         sql = text("  \

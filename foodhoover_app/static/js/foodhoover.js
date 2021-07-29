@@ -1354,6 +1354,7 @@ function loadChains(chain, start, end) {
   }
 
   $.getJSON('chainsboundary.json?start='+ start.format('YYYY-MM-DD')+"&end="+ end.format('YYYY-MM-DD')+'&chain='+chain, function (json) {
+    chains_dict = {}
     for (feature in json['features']){
       geojson = json['features'][feature]
       vendor = json['features'][feature]['properties']['vendor']
