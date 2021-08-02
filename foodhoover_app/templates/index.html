@@ -380,7 +380,7 @@
           $.ajax("{{url_for('autocomplete')}}",{
             type: 'GET',
             data: {
-              q: term,
+              q: term.replace(/[\u2018\u2019]/g, "'"),
               lat: map.getCenter().lat(),
               lng: map.getCenter().lng()
             },

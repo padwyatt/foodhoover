@@ -25,8 +25,9 @@ def load_postcodes():
     postcode_lookup.rename(columns={'postcode_no_space': 'postcode'}, inplace=True)
 
     ##add a geometry which describes the center of each postcode
-    postcode_lookup['postcode_point'] = np.where((~np.isnan(postcode_lookup['longitude']) & ~np.isnan(postcode_lookup['latitude'])), gpd.points_from_xy(postcode_lookup['longitude'],postcode_lookup['latitude']),None)
+    ##postcode_lookup['postcode_point'] = np.where((~np.isnan(postcode_lookup['longitude']) & ~np.isnan(postcode_lookup['latitude'])), gpd.points_from_xy(postcode_lookup['longitude'],postcode_lookup['latitude']),None)
     postcode_lookup['postcode_point'] = None
+    postcode_lookup['postcode_geohash'] = None
     
     ##load the postcodes metadata
     metadata = pd.read_csv('metadata/postcodes_data.csv',on_bad_lines='warn', usecols=[0,8])
@@ -36,13 +37,17 @@ def load_postcodes():
 
     ##send to bigquery
     client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
+    table_id = "rooscrape.foodhoover_store.postcode_lookup"
+
+    ##delete current table
+    client.delete_table(table_id, not_found_ok=True)
 
     job_config = bigquery.LoadJobConfig(
         schema=[
-            bigquery.SchemaField("postcode_point", bigquery.enums.SqlTypeNames.GEOGRAPHY)],
+            bigquery.SchemaField("postcode_point", bigquery.enums.SqlTypeNames.GEOGRAPHY),
+            bigquery.SchemaField("postcode_geohash", bigquery.enums.SqlTypeNames.STRING)],
         write_disposition="WRITE_TRUNCATE"
     )
-    table_id = "rooscrape.foodhoover_store.postcode_lookup"
 
     job = client.load_table_from_dataframe(
         postcode_lookup, table_id, job_config=job_config
@@ -50,7 +55,7 @@ def load_postcodes():
     job.result()
 
     ###update the add a centre point to each sector
-    sql = "UPDATE "+table_id+ " SET postcode_point = ST_GEOGPOINT(longitude, latitude) where longitude is not null and latitude is not null"
+    sql = "UPDATE "+table_id+ " SET postcode_point = ST_GEOGPOINT(longitude, latitude), postcode_geohash= ST_GEOHASH(ST_GEOGPOINT(longitude, latitude),12) where longitude is not null and latitude is not null"
     job = client.query(sql)
     job.result()
 
@@ -328,10 +333,10 @@ def export_districts():
 
 def export_postcodes():
     try:
-        sql = "SELECT postcode, status, country, latitude, longitude, postcode_area, postcode_district, postcode_sector, TO_HEX(ST_ASBINARY(postcode_point)) as postcode_point, Total_Persons FROM foodhoover_store.postcode_lookup"
+        sql = "SELECT postcode, status, country, latitude, longitude, postcode_area, postcode_district, postcode_sector, TO_HEX(ST_ASBINARY(postcode_point)) as postcode_point,postcode_geohash, Total_Persons FROM foodhoover_store.postcode_lookup"
         gcs_filename = 'postcode_lookup.gzip'
         file_path =  bq_to_gcs(sql, gcs_filename)
-        status = import_sql(file_path, ['postcode', 'status', 'country', 'latitude', 'longitude', 'postcode_area', 'postcode_district', 'postcode_sector','postcode_point','Total_Persons'], "postcode_lookup",'overwrite')
+        status = import_sql(file_path, ['postcode', 'status', 'country', 'latitude', 'longitude', 'postcode_area', 'postcode_district', 'postcode_sector','postcode_point','postcode_geohash','Total_Persons'], "postcode_lookup",'overwrite')
         return "Postcodes exported"
     except Exception as e:
         return e

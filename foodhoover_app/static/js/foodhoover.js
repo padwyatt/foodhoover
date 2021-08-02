@@ -1015,7 +1015,6 @@ function countryMap(start, end, map){
         labelDataCell = document.createElement("label");
         labelDataCell.innerHTML = stats[vendor]['rx_num'].toLocaleString()
         layersDataCell.appendChild(labelDataCell)
-
         layersDataRow.appendChild(layersDataCell)
         layersDataCell = document.createElement("td");
         labelDataCell = document.createElement("label");
@@ -1139,7 +1138,7 @@ function countryMap(start, end, map){
 
 function setChains(){
   chain = $('#chains_name').val();
-  chain = chain.replace('’','\'') //deals with issue where iOS has a different apostrophe
+  chain = chain.replace(/[\u2018\u2019]/g, "'"); //deals with issue where iOS has a different apostrophe
 
   zoom = chains_map.getZoom()
   bounds =  chains_map.getBounds()

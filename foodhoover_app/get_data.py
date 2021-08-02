@@ -39,7 +39,7 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
                             MAX(ue) as ue,\
                             MAX(fh) as fh\
                         FROM agg_district_run z\
-                        WHERE scrape_time>=:start and scrape_time<=:end\
+                        WHERE DATE_TRUNC('day',scrape_time)>=:start and DATE_TRUNC('day',scrape_time)<=:end\
                         GROUP by postcode_district) counts\
                     ON counts.postcode_district=districts.district\
             ) agg\
@@ -73,7 +73,7 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
                     MAX(a.fh) as fh \
                     FROM agg_sector_run a \
                     INNER JOIN sectors b ON a.postcode_sector=b.sector \
-                    WHERE a.scrape_time>=:start and a.scrape_time<=:end \
+                    WHERE DATE_TRUNC('day',a.scrape_time)>=:start and DATE_TRUNC('day',a.scrape_time)<=:end \
                     AND geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn) \
                     GROUP by b.sector \
                 ) as agg \
@@ -93,7 +93,7 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
             'rx_num', MAX(rx_num)\
             ) as country_stats\
         FROM agg_country_run_pop\
-        WHERE scrape_time>=:start AND scrape_time<=:end\
+        WHERE DATE_TRUNC('day',scrape_time)>=:start AND DATE_TRUNC('day',scrape_time)<=:end\
         GROUP BY vendor\
     ")
 
@@ -179,7 +179,7 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                     ON \
                     sectors.sector=postcode_lookup.postcode_sector \
                     WHERE \
-                    scrape_time>=:start AND scrape_time<=:end\
+                    DATE_TRUNC('day',scrape_time)>=:start AND DATE_TRUNC('day',scrape_time)<=:end\
                     AND rx_uid IN( \
                     SELECT \
                         rx_uid \
@@ -299,7 +299,7 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                         MAX(places.place_lng) as place_lng\
                     FROM (\
                         SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                        WHERE scrape_time>=@start and scrape_time<=@end\
+                        WHERE DATE_TRUNC('day',scrape_time)>=@start and DATE_TRUNC('day',scrape_time)<=@end\
                         AND rx_uid IN(\
                             SELECT distinct(rx_uid) from rooscrape.foodhoover_store.rx_ref\
                             WHERE hoover_place_id IN UNNEST(@place_ids)\
@@ -501,7 +501,7 @@ def get_chains_boundary(chain, start, end, last_update):
             WITH raw as (\
             SELECT ref.vendor, look.postcode_sector, ARRAY_AGG(DISTINCT coverage.rx_uid) as rx_included FROM (\
                 SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                WHERE scrape_time>=@start AND scrape_time<=@end\
+                WHERE DATE_TRUNC('day',scrape_time)>=@start AND DATE_TRUNC('day',scrape_time)<=@end\
                 AND rx_uid IN(\
                     SELECT distinct(ref.rx_uid) from rooscrape.foodhoover_store.places\
                     LEFT join rooscrape.foodhoover_store.rx_ref ref on ref.hoover_place_id = places.place_id\

@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify
-from datetime import datetime, timedelta
+from datetime import timedelta
 from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_flash, count_flash, get_last_update, get_chains_boundary, get_places_in_area
 import json
 
@@ -17,29 +17,7 @@ map_secret = secrets['map_key']
 first_update, last_update = get_last_update()
 start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
 end = last_update.strftime('%Y-%m-%d')
-
-#@app.route('/')
-#
-#def index(): 
-#
-#    if 'tab' in request.args:
-#        tab_name = request.args.get('tab')
-#    else:
-#        tab_name = 'country'
-#    
-#   if 'start' in request.args:
-#        start = request.args.get('start')
-#    else:
-#        start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
-#
-#    if 'end' in request.args:
-#        end = request.args.get('end')
-#    else:
-#        end = last_update.strftime('%Y-%m-%d')
-#
-#    place_ids = request.args.getlist('place_id')
-#   place_details = get_restaurant_details(place_ids)
-#   return render_template('index.html', place_details=place_details, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
+print(end)
 
 @app.route('/aggregator')
 @app.route('/')

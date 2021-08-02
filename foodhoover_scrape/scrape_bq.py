@@ -34,7 +34,7 @@ def bq_run_scrape(run_id):
         client = get_bq_client()
         bqstorageclient =get_bq_storage()
 
-        sql = "SELECT a.sector, b.postcode_area, b.postcode_district, b.postcode, b.longitude, b.latitude \
+        sql = "SELECT a.sector, b.postcode_area, b.postcode_district, b.postcode, b.longitude, b.latitude, b.postcode_geohash \
             FROM rooscrape.foodhoover_store.sectors a \
             LEFT JOIN rooscrape.foodhoover_store.postcode_lookup b ON a.closest_postcode=b.postcode \
             WHERE closest_postcode is not null"
@@ -47,7 +47,7 @@ def bq_run_scrape(run_id):
 
         urls = []
         for index, row in postcodes_to_crawl.iterrows():
-            urls.append('https://europe-west2-rooscrape.cloudfunctions.net/foodhoover?mode=availability&postcode='+row['postcode']+"&postcode_area="+row['postcode_area']+"&lat="+str(row['latitude'])+"&lng="+str(row['longitude'])+"&vendors=JE&vendors=UE&vendors=FH&vendors=ROO&run_id="+run_id)
+            urls.append('https://europe-west2-rooscrape.cloudfunctions.net/foodhoover?mode=availability&postcode='+row['postcode']+"&postcode_area="+row['postcode_area']+"&lat="+str(row['latitude'])+"&lng="+str(row['longitude'])+"&geohash="+row['postcode_geohash']+"&vendors=JE&vendors=UE&vendors=FH&vendors=ROO&run_id="+run_id)
 
         url_batch_old(urls, 25)
 

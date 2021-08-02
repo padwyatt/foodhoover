@@ -233,9 +233,10 @@ def get_roo_blob(data):
 
     postcode = data['postcode']
     postcode_area = data['postcode_area']
+    geohash = data['geohash']
     run_id = data['run_id']
 
-    url = "https://deliveroo.co.uk/restaurants/london/new-cross?postcode="+postcode+"&collection=all-restaurants"
+    url = "https://deliveroo.co.uk/restaurants/london/new-cross?geohash="+geohash+"&collection=all-restaurants"
 
     blob = []
     rx_open = 0
@@ -309,6 +310,7 @@ async def open_status(request):
     vendors = request.args.getlist('vendors')
     run_id = request.args.get('run_id')
     mode = request.args.get('mode')
+    geohash = request.args.get('geohash')
 
     results = []
 
@@ -326,7 +328,7 @@ async def open_status(request):
          futures.append(loop.run_in_executor(None, partial(get_fh_blob, {'postcode':postcode, 'postcode_area':postcode_area, 'run_id':run_id})))
     
     if 'ROO' in vendors:
-        futures.append(loop.run_in_executor(None, partial(get_roo_blob, {'postcode':postcode, 'postcode_area':postcode_area, 'run_id':run_id})))
+        futures.append(loop.run_in_executor(None, partial(get_roo_blob, {'postcode':postcode, 'postcode_area':postcode_area, 'run_id':run_id, 'geohash':geohash})))
 
     results = await asyncio.gather(*futures)
     
@@ -342,6 +344,7 @@ async def open_status(request):
     if mode == 'flash': ##write to SQL if flash
         flash_dataset = [{'rx_uid':r['rx_slug']+'-'+r['vendor'],'cx_postcode':r['cx_postcode'], 'run_id':r['run_id']} for r in dataset]
         write_sql(flash_dataset, 'rx_cx_fast_flash')
+        return json.dumps(flash_dataset)
     else:
         if len(dataset)>0:
             write_bq(dataset, 'rx_cx_results_raw') ##write to BQ
