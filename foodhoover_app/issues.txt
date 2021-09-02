@@ -1,6 +1,6 @@
 #######Issues
 
-4. Error handling from data pulls
+4. Error handling from data pull
 
 ######ui
 ### only update new markers, to avoid flickering 
