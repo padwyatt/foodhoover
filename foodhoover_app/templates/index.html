@@ -90,11 +90,24 @@
             float:left;
             width: calc(100% - 50px);
         }
+        #datemask{
+            background: #f1f1f1; 
+            cursor: pointer; 
+            padding: 5px 10px; 
+            border: 1px solid #ccc;
+            float:left;
+            width: calc(100% - 50px);
+            display: none;
+            height: 100%;
+            font-size: 14px;
+            color: #333
+        }
 
         #flash{
             height: 34px;
             margin-left: 15px;
             float:left;
+            display: none;
         }
         #multiselect{
             flex: 1 0 300px;
@@ -171,6 +184,14 @@
             text-align: center;
         }
 
+        #flashLabel{
+            margin-bottom: 40px;
+            background: white;
+            opacity: 0.5;
+            padding: 10px;
+            font-size: 20px;
+        }
+
         .footer{
             height: 40px;
             padding: 10px;
@@ -221,11 +242,12 @@
     <div class='scene' id='resto_scene'>
         <div class='header_form'>
             <div class='datepicker'>
+                <div id="datemask"><span>Realtime</span></div>
                 <div class="reportrange">
                     <i class="fa fa-calendar"></i>&nbsp;
                     <span></span> <i class="fa fa-caret-down"></i>
                 </div>
-                <img src="{{ url_for('static', filename= 'images/flash.png') }}" id='flash' alt = 'Realtime update' title="Realtime update" onclick="triggerFlash();">
+                <img src="{{ url_for('static', filename= 'images/flash.png') }}" id='flash' alt = 'Realtime update' title="Realtime update" onclick="setupFlash();">
             </div>
             <div id='multiselect'>
                 <select class="tokenize-demo" multiple>
@@ -275,7 +297,7 @@
 
     <div id="loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});"></div>
     <div id="flash_loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});">
-        <span><b>Foodhoovering!</b> May take up to a minute...</span>
+        <span><b>Scraping!</b> May take up to a minute...</span>
     </div>
 </body>
 
@@ -303,7 +325,8 @@
     }
     rx_icon = "{{ url_for('static', filename= 'images/rx_marker.png') }}"
     flash_icon = "{{ url_for('static', filename= 'images/flash.png') }}"
-
+    close_icon = "{{ url_for('static', filename= 'images/close.png') }}"
+    
     //global objects
     var resto_map = {}
     var country_map = {}
@@ -351,6 +374,7 @@
                 country_map = CountryData(start, end, country_map);
                 break;
             case 'chains':
+                chain = $("#chains_name").val()
                 loadChains(chain, start, end);
                 break;
 
@@ -359,6 +383,7 @@
 
     $('.reportrange').daterangepicker({
         startDate: start,
+        enabled: false,
         endDate: end,
         minDate: moment('{{first_update}}','YYYY-MM-DD'),
         maxDate: moment('{{last_update}}','YYYY-MM-DD'),

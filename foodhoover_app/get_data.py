@@ -2,10 +2,6 @@ from sqlalchemy.sql import text
 from sqlalchemy.sql.expression import true
 from connections import get_sql_client, get_bq_client
 from google.cloud import bigquery
-
-import asyncio
-from aiohttp import ClientSession
-import uuid
 import json
 from datetime import timedelta
 
@@ -149,8 +145,8 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                 SELECT \
                     z.rx_uid, \
                     jsonb_build_object( \
-                        'type', 'Feature', \
-                        'id', z.rx_uid, \
+                        't_ype', 'Feature', \
+                        'id', z.rxuid, \
                         'geometry', ST_AsGeoJSON(ST_ForcePolygonCW(ST_BuildArea(ST_UNION(z.geometry))))::jsonb, \
                         'properties', to_jsonb( \
                             jsonb_build_object( \
@@ -226,7 +222,7 @@ def get_delivery_boundary(start, end, place_ids, last_update):
             jsonb_build_object(\
                 'type', 'Feature',\
                 'id', CONCAT(place_id,'-',vendor),\
-                'geometry', ST_AsGeoJSON(delivery_zone)::jsonb,\
+                'geometry', ST_AsGeoJSON(ST_CollectionExtract(delivery_zone,3))::jsonb,\
                 'properties', to_jsonb(\
                     jsonb_build_object(\
                         'place_vendor_id', CONCAT(place_id,'-',vendor),\
@@ -291,25 +287,37 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                 FROM (\
                     SELECT\
                         places.place_id,\
-                        ref.vendor,\
-                        ST_SIMPLIFY(ST_SNAPTOGRID(ST_UNION_AGG(sectors.geometry),0.0001),50) as delivery_zone,\
+                        bysector.vendor,\
+                        ST_UNION(ST_DUMP(ST_SIMPLIFY(ST_UNION_AGG(sectors.geometry),50),2)) as delivery_zone,\
                         SUM(sectors.population) as delivery_population,\
-                        MAX(places.place_name) as place_name,\
-                        MAX(places.place_lat) as place_lat,\
-                        MAX(places.place_lng) as place_lng\
+                        max(places.place_name) as place_name,\
+                        max(places.place_lat) as place_lat,\
+                        max(places.place_lng) as place_lng,\
+                        ARRAY_CONCAT_AGG(vendor_rx LIMIT 1) as vendor_rx,\
+                        ARRAY_AGG(DISTINCT(sectors.sector) IGNORE NULLS) as sectors_covered\
                     FROM (\
-                        SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                        WHERE DATE_TRUNC('day',scrape_time)>=@start and DATE_TRUNC('day',scrape_time)<=@end\
-                        AND rx_uid IN(\
-                            SELECT distinct(rx_uid) from rooscrape.foodhoover_store.rx_ref\
-                            WHERE hoover_place_id IN UNNEST(@place_ids)\
+                        SELECT\
+                        places.place_id,\
+                        ref.vendor,\
+                        sectors.sector,\
+                        ARRAY_AGG(DISTINCT(ref.rx_uid) IGNORE NULLS) as vendor_rx,\
+                        FROM (\
+                            SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
+                            WHERE scrape_time>='"+start+"' and scrape_time<='"+end+"'\
+                            AND rx_uid IN(\
+                                SELECT distinct(rx_uid) from rooscrape.foodhoover_store.rx_ref\
+                                WHERE hoover_place_id IN UNNEST(@place_ids)\
                             )\
-                        GROUP BY rx_uid, cx_postcode) results\
-                    LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
-                    LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
-                    LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
-                    LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
-                    GROUP BY places.place_id, ref.vendor\
+                            GROUP BY rx_uid, cx_postcode) results\
+                        LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
+                        LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
+                        LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
+                        LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
+                        GROUP BY places.place_id, ref.vendor, sectors.sector) bysector\
+                    LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = bysector.sector\
+                    RIGHT JOIN rooscrape.foodhoover_store.places places on places.place_id = bysector.place_id\
+                    WHERE places.place_id IN UNNEST(@place_ids)\
+                    GROUP BY places.place_id, bysector.vendor\
                 ) agg_rx_cx\
             ) as places\
             GROUP BY places.place_id\
@@ -361,80 +369,6 @@ def get_delivery_boundary(start, end, place_ids, last_update):
     return place_boundary
 
 
-def get_flash_boundary(start, end, place_id, run_id):
-
-    sql = text("  \
-            SELECT rx_uid,\
-            jsonb_agg(features.feature) as geometry \
-            FROM ( \
-                SELECT \
-                    z.rx_uid, \
-                    jsonb_build_object( \
-                        'type', 'Feature', \
-                        'id', z.rx_uid, \
-                        'geometry', ST_AsGeoJSON(ST_ForcePolygonCW(ST_BuildArea(ST_UNION(z.geometry))))::jsonb, \
-                        'properties', to_jsonb( \
-                            jsonb_build_object( \
-                                'place_vendor_id', z.rx_uid, \
-                                'vendor', MAX(rx_ref.vendor), \
-                                'delivery_area',  ST_AREA(ST_TRANSFORM(ST_UNION(z.geometry), 31467))/1000000,\
-                                'delivery_population', SUM(population), \
-                                'place_id', MAX(rx_ref.hoover_place_id) \
-                            ) \
-                        )\
-                    ) as feature \
-                FROM ( \
-                    SELECT \
-                    postcode_sector, \
-                    rx_uid, \
-                    MAX(sectors.population) as population, \
-                    ST_MakeValid(MAX(geometry)) AS geometry \
-                    FROM \
-                    rx_cx_fast_flash rx_cx_fast\
-                    LEFT JOIN \
-                    postcode_lookup \
-                    ON \
-                    postcode_lookup.postcode = rx_cx_fast.cx_postcode \
-                    LEFT JOIN \
-                    sectors \
-                    ON \
-                    sectors.sector=postcode_lookup.postcode_sector \
-                    WHERE \
-                    run_id = :run_id\
-                    AND rx_uid IN( \
-                    SELECT \
-                        rx_uid \
-                    FROM rx_ref \
-                    WHERE hoover_place_id=:place_id) \
-                    AND sectors.geometry IS NOT NULL \
-                    GROUP BY \
-                    postcode_sector, \
-                    rx_uid) z \
-                LEFT JOIN rx_ref on rx_ref.rx_uid=z.rx_uid \
-                GROUP BY z.rx_uid \
-            ) features \
-            GROUP BY rx_uid \
-        ")
-
-    engine = get_sql_client('foodhoover_cache')
-    conn = engine.connect()
-    result = conn.execute(sql, place_id=place_id, run_id=run_id)
-
-    try:
-        resto_map = {'features' : [r['geometry'][0] for r in result]}
-    except:
-        resto_map = []
-
-    place_details = get_restaurant_details([place_id])
-
-    place_boundary = {}
-    place_boundary[place_id] = {
-        'place_details':  place_details[place_id],
-        'place_map' : resto_map
-    }
-
-    return place_boundary
-
 def get_rx_names(search, lat, lng):
 
     sql = text("\
@@ -468,7 +402,7 @@ def get_restaurant_details(place_ids):
             )\
         ) as entities\
         FROM places\
-        LEFT JOIN rx_ref on places.place_id=rx_ref.place_id\
+        LEFT JOIN rx_ref on places.place_id=rx_ref.hoover_place_id\
         WHERE places.place_id IN :place_ids\
         GROUP by places.place_id\
     ")
@@ -501,7 +435,7 @@ def get_chains_boundary(chain, start, end, last_update):
             WITH raw as (\
             SELECT ref.vendor, look.postcode_sector, ARRAY_AGG(DISTINCT coverage.rx_uid) as rx_included FROM (\
                 SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                WHERE DATE_TRUNC('day',scrape_time)>=@start AND DATE_TRUNC('day',scrape_time)<=@end\
+                WHERE DATE_TRUNC(scrape_time,DAY)>=@start AND DATE_TRUNC(scrape_time,DAY)<=@end\
                 AND rx_uid IN(\
                     SELECT distinct(ref.rx_uid) from rooscrape.foodhoover_store.places\
                     LEFT join rooscrape.foodhoover_store.rx_ref ref on ref.hoover_place_id = places.place_id\
@@ -596,7 +530,6 @@ def get_chains_boundary(chain, start, end, last_update):
     return chain_areas
 
 def get_places_in_area(chain, lngw, lats, lnge, latn):
-
     sql = text(
         "SELECT\
             place_id,\
@@ -619,80 +552,9 @@ def get_places_in_area(chain, lngw, lats, lnge, latn):
     return  [{'place_id': r['place_id'],'place_name': r['place_name'],'place_lat': r['place_lat'],'place_lng': r['place_lng'],'place_vendors': r['place_vendors']} for r in result]
 
 def get_last_update():
-    sql = "select min(scrape_time) as first_update, max(scrape_time) as last_update from agg_country_run"
+    sql = "select min(scrape_time) as first_update, max(scrape_time) as last_update from agg_country_run_pop"
     engine = get_sql_client('foodhoover_cache')
     conn = engine.connect()
     result = conn.execute(sql)
 
     return result.fetchone()
-
-def count_flash(lngw, lats, lnge, lngn):
-    sql = text(
-        "SELECT count(1) as sector_count FROM sectors \
-        WHERE geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn)")
-
-    engine = get_sql_client('foodhoover_cache')
-    conn = engine.connect()
-    result = conn.execute(sql, lngw=lngw, lats=lats, lnge=lnge, lngn=lngn)
-
-    sector_count = str(result.fetchone()['sector_count'])
-
-    return sector_count
-
-def get_flash(lngw, lats, lnge, lngn, place_ids, vendors):
-    sql = text(
-        "SELECT sector, postcode_area, latitude, longitude, postcode FROM sectors \
-        LEFT JOIN postcode_lookup on sectors.closest_postcode = postcode_lookup.postcode \
-        WHERE geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn) AND postcode IS NOT NULL")
-    
-    engine = get_sql_client('foodhoover_cache')
-    conn = engine.connect()
-    result = conn.execute(sql, lngw=lngw, lats=lats, lnge=lnge, lngn=lngn)
-    urls_to_crawl = []
-
-    run_id = str(uuid.uuid4()) + '-flash'
-    vendor_string = "&vendors="+"&vendors=".join(vendors)
-    for row in result:
-        urls_to_crawl.append('https://europe-west2-rooscrape.cloudfunctions.net/foodhoover?mode=flash&postcode='+row['postcode']+"&postcode_area="+row['postcode_area']+"&lat="+str(row['latitude'])+"&lng="+str(row['longitude'])+vendor_string+"&run_id="+run_id)
-
-    asyncio.run(url_batch(urls_to_crawl, flash_fetch_function, 25))
-    ##get refreshed data
-    scrape_results = get_flash_boundary(None, None, place_ids[0], run_id = run_id)
-
-    return scrape_results
-
-async def url_batch(fetch_datas, fetch_function, batch_size):
-
-    async def bound_fetch(sem, fetch_data, fetch_function):
-        # Getter function with semaphore.
-        async with sem:
-            response = await fetch_function(fetch_data)      
-            return response
-
-    tasks = []
-    # create instance of Semaphore
-    sem = asyncio.Semaphore(batch_size)
-
-    # Create client session that will ensure we dont open new connection
-    # per each request.
-    async with ClientSession() as session:
-        for fetch_data in fetch_datas:
-            # pass Semaphore and session to every GET request
-            task = asyncio.ensure_future(bound_fetch(sem, fetch_data, fetch_function))
-            tasks.append(task)
-
-        responses = await asyncio.gather(*tasks)
-        
-    return responses
-
-async def flash_fetch_function(fetch_data):
-    print(fetch_data)
-    async with ClientSession() as session:
-        try:
-            async with session.get(fetch_data, timeout=30) as response:
-                response = await response.read()
-                #response = json.loads(response.decode('utf8'))
-                return response.decode('utf8')
-        except Exception as e:
-            return str(e)
-            

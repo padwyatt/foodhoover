@@ -300,7 +300,11 @@ function removePlace(place_id){
         geo_layer.forEach(function(feature) {
         geo_layer.remove(feature);
         });
+        flashZone.setMap(null)
+        flashMarker.setMap(null)
         infowindow_resto.close()
+        closeFlash()
+        $('#flash').hide()
     }
         
     //reset the layer selector
@@ -315,6 +319,7 @@ function addPlace(place_id){
     //add to place_details list
     place = {place_id:place_id}
     place_details[place_id] = place
+    $('#flash').show()
     placeBoundaries([place_id], map, start, end)
 }
 
@@ -329,6 +334,25 @@ function processPoints(geometry, callback, thisArg) {
       processPoints(g, callback, thisArg);
     });
   }
+}
+
+function polygon_paths_from_bounds(bounds, clockwise){
+  var path = new google.maps.MVCArray();
+  var ne = bounds.getNorthEast();
+  var sw = bounds.getSouthWest();
+  if (clockwise) {
+    path.push(ne);
+    path.push(new google.maps.LatLng(sw.lat(), ne.lng()));
+    path.push(sw);
+    path.push(new google.maps.LatLng(ne.lat(), sw.lng()));
+  }
+  else{
+    path.push(new google.maps.LatLng(ne.lat(), sw.lng()));
+    path.push(sw);
+    path.push(new google.maps.LatLng(sw.lat(), ne.lng()));
+    path.push(ne);
+  }
+  return path
 }
 
 function getUrlVars(var_name){
@@ -362,6 +386,10 @@ function loadTab(tab=tab_name) {
           bounds = new google.maps.LatLngBounds()
           geo_layer = new google.maps.Data({map: resto_map});
           infowindow_resto = new google.maps.InfoWindow();
+          flashZone = new google.maps.Polygon()
+          flashMarker = new google.maps.Marker()
+          closeMarker = new google.maps.Marker()
+          flashed = false
 
           $('.scene').hide()
           $('#resto_scene').show()
@@ -369,6 +397,7 @@ function loadTab(tab=tab_name) {
           place_ids = Object.keys(place_details)
           if (place_ids.length !== 0){
             placeBoundaries(place_ids, resto_map, start, end)
+            $('#flash').show()
           }
 
           break;
@@ -459,91 +488,245 @@ function setVisible(selector, visible) {
 
 ///RESTO TAB
 
-function triggerFlash(){
-  layer_bounds = new google.maps.LatLngBounds();
+function closeFlash(){
+  flashMarker.setMap(null);
+  closeMarker.setMap(null);
+  flashZone.setMap(null);
+  $('#datemask').hide()
+  $('.reportrange').show()
+  $('#flash').show()
+  $('.token-search').show()
+  $('.tokenize>.tokens-container').css('background-color', '')
+  if (flashed){
+    placeBoundaries(Object.keys(place_details), map, start, end)   
+  }
+  flashed = false
+  map.controls[google.maps.ControlPosition.BOTTOM_CENTER].clear()
+}
+
+function flashMessage(text){
+  flashLabel = document.createElement('div');
+  flashLabel.setAttribute("id", "flashLabel");
+  flashLabel.innerHTML = text
+  map.controls[google.maps.ControlPosition.BOTTOM_CENTER].clear()
+  map.controls[google.maps.ControlPosition.BOTTOM_CENTER].push(flashLabel);
+}
+
+function setupFlash(){
+
+  if (typeof flashZone != "undefined") {
+    flashZone.setMap(null)
+  }
+  $('#flash').hide()
+  $('.reportrange').hide()
+  $('#datemask').show()
+  $('.token-search').hide()
+  $('.tokenize>.tokens-container').css('background-color', '#f1f1f1')
+
+  flashMessage('Adjust the area to scrape, and then click')
+
+  //get the bounding box around the currentlty loaded
+  flash_bounds = new google.maps.LatLngBounds();
   for (rx_layer in layers_dict){        
     layers_dict[rx_layer]['layer'].forEach(function(feature){
        feature.getGeometry().forEachLatLng(function(latlng){
-           layer_bounds.extend(latlng)
+           flash_bounds.extend(latlng)
            });
         });
   }
 
-  flashZone = new google.maps.Rectangle({
-    bounds: layer_bounds,
-    strokeColor: '#FF0000',
+  var paths = new google.maps.MVCArray();
+  paths.push(polygon_paths_from_bounds(map.getBounds(), true))
+  paths.push(polygon_paths_from_bounds(flash_bounds, false))
+
+  flashZone = new google.maps.Polygon({
+    paths: paths,
+    strokeColor: 'grey',
     strokeOpacity: 0.8,
     strokeWeight: 2,
-    fillColor: '#FF0000',
-    fillOpacity: 0.35,
-    editable: true,
-    draggable: true,
+    fillColor: 'grey',
+    fillOpacity: 0.8,
+    editable: true
   });
 
   flashZone.setMap(resto_map);
 
-  function addFlashMarker(visible){
-
-    if (flashMarker.map !==undefined){
-      flashMarker.setMap(null);
+  function flashZoneChanged(flashZone){
+    flash_paths =  flashZone.getPaths().getArray()[1]
+    top_point = {
+      'lng' : null,
+      'lat' : null
     }
+    flash_bounds = []
+    inner_bounds = new google.maps.LatLngBounds()
+    flash_paths.getArray().forEach(function(value, index, array_x) {
+      inner_bounds =  inner_bounds.extend(value)
+      point = value.toJSON()
+      if ((point['lat']>top_point['lat']) || (point['lng']>top_point['lng'])){
+        top_point = point
+      }
+      flash_bounds.push([point['lng'],point['lat']])
+    })
+    flash_bounds.push(flash_bounds[0]) //close the polygon
 
-    if (visible){
-      var icon = {
-        url: flash_icon,
-        scaledSize: new google.maps.Size(100, 200), // scaled size
-        origin: new google.maps.Point(0,0), // origin
-        anchor: new google.maps.Point(50, 100), // anchor
-        opacity: 0.1
-      };
+    place_ids_to_scrape = Object.keys(place_details)
 
-      flashMarker = new google.maps.Marker({
-        position: flashZone.getBounds().getCenter(),
-        map: resto_map,
-        icon: icon
-      });
+    //flash icon
+    flashMarker.setMap(null);
+    var icon = {
+      url: flash_icon,
+      scaledSize: new google.maps.Size(100, 200), // scaled size
+      origin: new google.maps.Point(0,0), // origin
+      anchor: new google.maps.Point(50, 100), // anchor
+    };
+    flashMarker = new google.maps.Marker({
+      position: inner_bounds.getCenter(),
+      map: resto_map,
+      icon: icon, 
+      opacity: 0.7,
+      label: {
+        text: 'Click to Scrape',
+        color: 'black',
+        fontSize: "20px"
+      }
+    });
+    google.maps.event.addListener(flashMarker, 'click', function() {
+      triggerFlash();
+    })
+    google.maps.event.addListener(flashMarker, 'mouseover', function() {
+      flashMarker.setOpacity(1)
+    })
+    google.maps.event.addListener(flashMarker, 'mouseout', function() {
+      flashMarker.setOpacity(0.5)
+    })
+    
+    //close icon
+    closeMarker.setMap(null);
+    var icon = {
+      url: close_icon,
+      scaledSize: new google.maps.Size(30, 30), // scaled size
+      origin: new google.maps.Point(0,0), // origin
+      anchor: new google.maps.Point(0, 40), // anchor
+      opacity: 0
+    };
+    closeMarker = new google.maps.Marker({
+      position: top_point,
+      map: resto_map,
+      icon: icon,
+    });
+    google.maps.event.addListener(closeMarker, 'click', function() {
+      closeFlash();
+    })
 
-      google.maps.event.addListener(flashMarker, 'click', function() {restoFlash();})
-    }
-    else {
-      flashMarker = new google.maps.Marker({
-        position: flashZone.getBounds().getCenter(),
-        label: 'Select a smaller area',
-        label: {
-          text: 'Select a smaller area',
-          color: 'black',
-          fontSize: "20px"
-        },
-        map: resto_map, 
-        icon: " "
-      });
-    }
-  }
-
-  function flashZoneChanged(){
-
-    bounds =  flashZone.getBounds()
-    var ne = bounds.getNorthEast();
-    var sw = bounds.getSouthWest();
-
-    $.ajax({
-      async: true,
-      type: "GET",
-      url: "/count_flash?lngw="+sw.lng()+"&lats="+sw.lat()+"&lnge="+ne.lng()+"&latn="+ne.lat(),
-      success: function (response) {
-        addFlashMarker((parseInt(response)<=150)); //set the visibility of the marker based on the number of sectors
+    google.maps.event.addListener(resto_map, 'bounds_changed', function(){
+      if (flashZone.getMap() !== null){
+        paths = flashZone.getPaths()
+        flash_bounds = resto_map.getBounds()
+        paths.setAt(0, polygon_paths_from_bounds(flash_bounds, true))
       }
     })
+
+    //flashLabel = new google.maps.Marker({
+    //    position: inner_bounds.getCenter(),
+    //   label: {
+    //      text: 'Click to Scrape',
+    //      color: 'black',
+    //      fontSize: "20px"
+    //    },
+    //    map: resto_map, 
+    //    icon: " "
+    //  });
+
+    flashZone.flash_bounds = flash_bounds
+    flashZone.place_ids_to_scrape = place_ids_to_scrape
+
+    return flashZone
   }
 
-  flashZoneChanged();
+  flashZone = flashZoneChanged(flashZone);
 
-  flashZone.addListener("bounds_changed", function(){flashZoneChanged()});
-  
+  flashZone.getPaths().forEach(function(path, index){
+    google.maps.event.addListener(path, 'insert_at', function(){ 
+      flashMessage('Click to start scrape')
+      flashZone = flashZoneChanged(flashZone)
+    });
+    google.maps.event.addListener(path, 'remove_at', function(){
+      flashMessage('Click to start scrape')
+      flashZone = flashZoneChanged(flashZone)
+    });
+    google.maps.event.addListener(path, 'set_at', function(){
+      flashMessage('Click to start scrape')
+      flashZone = flashZoneChanged(flashZone)
+    });
+  });
 }
 
-function restoFlash(){
+function triggerFlash(){
+
+  setVisible('#loading', true);
+  flashMarker.setMap(null);
+  flashMessage('Starting scrape...')
+  var xhr = new XMLHttpRequest();
+
+  xhr.open("POST", '/flash');
+  xhr.setRequestHeader("Content-Type", "application/json");
+
+  message = JSON.stringify({
+    'place_ids': Array.from(flashZone.place_ids_to_scrape),
+    'bounds':Array.from(flashZone.flash_bounds)
+    })
+
+  xhr.send(message);
+  var position = 0;
+
+  function handleNewData() {
+      var messages = xhr.responseText.split('\n');
+      messages.slice(position, -1).forEach(function(value) {
+        flashed = true
+        $('.reportrange span').html('Real Time')
+        json = JSON.parse(value)
+        if (json['status']=='OK'){
+          render_places(json['flash_result'], mode='dynamic')
+          number_postcodes_scraped = json['postcodes_scraped'].length
+          number_postcodes_to_scrape = json['postcodes_to_scrape'].length
+          flashMessage(number_postcodes_scraped.toString()+'/'+number_postcodes_to_scrape.toString()+' postcodes scraped')
+        }
+        else{
+          switch(json['message']) {
+            case 'TOO MANY SECTORS':
+              flashMessage('Area too large to scrape.. adjust to include fewer postcodes')
+              break;
+            case 'TOO FEW SECTORS':
+              flashMessage('Area too small... adjust to add more postcodes')
+              break;
+            case 'TOO FEW PLACES':
+              flashMessage('Adjust the area to include at least one restaurant')
+              break;
+            default:
+              flashMessage('Sorry, something went wrong!')
+          }
+        } 
+      });
+      position = messages.length - 1;
+  }
+
+  var timer;
+  timer = setInterval(function() {
+      // check the response for new data
+      handleNewData();
+      // stop checking once the response has ended
+      if (xhr.readyState == XMLHttpRequest.DONE) {
+          clearInterval(timer);
+          setVisible('#loading', false);
+          console.log("DONE")
+      }
+  }, 1000);
+}
+
+
+function restoFlashOld(){
   setVisible('#flash_loading', true);
+
   bounds =  flashZone.getBounds()
   var ne = bounds.getNorthEast();
   var sw = bounds.getSouthWest();
@@ -719,7 +902,8 @@ function placeBoundaries(place_ids, map, start, end) {
     }
   }
 
-  this.render_places = function(json){
+  //function render_places(json){
+  this.render_places = function(json, mode='static'){
 
     place_ids = Object.keys(json)
     place_ids.forEach(function (place_id, index) {
@@ -737,6 +921,7 @@ function placeBoundaries(place_ids, map, start, end) {
       //remove any existing layers for this place_id
       for (layer in layers_dict){
         if (layers_dict[layer]['place_id']==place_id){
+          console.log("removing")
           layers_dict[layer]['layer'].setMap(null)
           delete layers_dict[layer]
         }
@@ -834,28 +1019,30 @@ function placeBoundaries(place_ids, map, start, end) {
     })
 
     //trigger the geolayer and the map key only when all are loaded
-    places_to_load = Object.keys(place_details)
-    if (places_to_load.every(i => places_loaded.includes(i))){
-      //fit map to layers on map
-      layer_bounds = new google.maps.LatLngBounds();
-      for (rx_layer in layers_dict){        
-        layers_dict[rx_layer]['layer'].forEach(function(feature){
-          feature.getGeometry().forEachLatLng(function(latlng){
-              layer_bounds.extend(latlng)
+    if (mode=='static'){ //only do this if we're not in flash mode
+      places_to_load = Object.keys(place_details)
+      if (places_to_load.every(i => places_loaded.includes(i))){
+        //fit map to layers on map
+        layer_bounds = new google.maps.LatLngBounds();
+        for (rx_layer in layers_dict){        
+          layers_dict[rx_layer]['layer'].forEach(function(feature){
+            feature.getGeometry().forEachLatLng(function(latlng){
+                layer_bounds.extend(latlng)
+                });
               });
-            });
+        }
+
+        layer_bounds.extend(marker_latlng);
+        map.fitBounds(layer_bounds, 0)
+
+        //add geoobjects
+        if (map.getZoom()>=10){
+          restoGeolayer(map);
+        }
+
+        layers = new Set(Object.values(layers_dict).map(({vendor})=>vendor))
+        layer_controller(layers, map)
       }
-
-      layer_bounds.extend(marker_latlng);
-      map.fitBounds(layer_bounds, 0)
-
-      //add geoobjects
-      if (map.getZoom()>=10){
-        restoGeolayer(map);
-      }
-
-      layers = new Set(Object.values(layers_dict).map(({vendor})=>vendor))
-      layer_controller(layers, map)
     }
   }
 

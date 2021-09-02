@@ -31,7 +31,7 @@ def get_je_blob(data):
             blob = json.loads(r.content.decode('utf-8'))
             restaurants_list = blob['Restaurants']
             rx_total = len(restaurants_list)
-            open_set = [{'vendor':'JE','cx_postcode':postcode,'rx_name':restaurant['Name'],'rx_postcode':restaurant['Address']['Postcode'].replace(" ", ""),'rx_menu':restaurant['Url'], 'rx_slug':restaurant['UniqueName'], 'rx_lat':restaurant['Address']['Latitude'],'rx_lng':restaurant['Address']['Longitude'],'run_id':run_id} for restaurant in restaurants_list if restaurant['IsOpenNow']]
+            open_set = [{'vendor':'JE','cx_postcode':postcode,'rx_name':restaurant['Name'],'rx_postcode':restaurant['Address']['Postcode'].replace(" ", ""),'rx_menu':restaurant['Url'], 'rx_slug':restaurant['UniqueName'], 'rx_lat':restaurant['Address']['Latitude'],'rx_lng':restaurant['Address']['Longitude'],'run_id':run_id,'eta':None, 'fee':None} for restaurant in restaurants_list if restaurant['IsOpenNow']]
             rx_open = len(open_set)
             status = 'Sucess'
         except Exception as e:
@@ -110,7 +110,7 @@ def get_ue_blob(data):
             restaurants = blob['data']['storesMap'].items()
             restaurants_list = [restaurant[1] for restaurant in restaurants]
             rx_total = len(restaurants_list)
-            open_set = [{'vendor':'UE','cx_postcode':postcode,'rx_name':restaurant['title'],'rx_menu':restaurant['slug'], 'rx_slug':restaurant['uuid'],'rx_postcode':None,'rx_lat':restaurant['location']['latitude'],'rx_lng':restaurant['location']['longitude'],'run_id':run_id} for restaurant in restaurants_list if restaurant['isOpen']]
+            open_set = [{'vendor':'UE','cx_postcode':postcode,'rx_name':restaurant['title'],'rx_menu':restaurant['slug'], 'rx_slug':restaurant['uuid'],'rx_postcode':None,'rx_lat':restaurant['location']['latitude'],'rx_lng':restaurant['location']['longitude'],'run_id':run_id,'eta':None, 'fee':None} for restaurant in restaurants_list if restaurant['isOpen']]
             rx_open = len(open_set)
             status = 'Sucess'
 
@@ -207,7 +207,7 @@ def get_fh_blob(data):
             blob = json.loads(r.content.decode('utf-8'))
             restaurants_list = blob['data']
             rx_total = len(restaurants_list)
-            open_set = [{'vendor':'FH','cx_postcode':postcode,'rx_name':restaurant['name'],'rx_menu':None, 'rx_slug':str(restaurant['id']),'rx_postcode':restaurant['postcode'].replace(" ", ""),'rx_lat':restaurant['lat'],'rx_lng':restaurant['lng'],'run_id':run_id} for restaurant in restaurants_list if restaurant['takeaway_open_status']=='open']
+            open_set = [{'vendor':'FH','cx_postcode':postcode,'rx_name':restaurant['name'],'rx_menu':None, 'rx_slug':str(restaurant['id']),'rx_postcode':restaurant['postcode'].replace(" ", ""),'rx_lat':restaurant['lat'],'rx_lng':restaurant['lng'],'run_id':run_id,'eta':None, 'fee':None} for restaurant in restaurants_list if restaurant['takeaway_open_status']=='open']
             rx_open = len(open_set)
             status = 'Sucess'
         except Exception as e:
@@ -258,7 +258,7 @@ def get_roo_blob(data):
                     rx_record = {'rx_uuid':rx_name,'rx_menu':rx_link,'rx_status':rx_status}
                     blob.append(rx_record)
                     if rx_status == 'Open':
-                        open_set_record = {'vendor':'ROO','cx_postcode':postcode,'rx_menu':rx_link,'rx_slug':rx_name,'rx_name':None,'rx_postcode':None,'rx_lat':None,'rx_lng':None,'run_id':run_id}
+                        open_set_record = {'vendor':'ROO','cx_postcode':postcode,'rx_menu':rx_link,'rx_slug':rx_name,'rx_name':None,'rx_postcode':None,'rx_lat':None,'rx_lng':None,'run_id':run_id,'eta':None, 'fee':None}
                         open_set.append(open_set_record)
                 except:
                     pass
@@ -335,6 +335,7 @@ async def open_status(request):
     final_result = []
     dataset = []
     for result in results:
+        result['payload_size'] = None
         final_result.append(result['result'])
         dataset = dataset + result['dataset']
     

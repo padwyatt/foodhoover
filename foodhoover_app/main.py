@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, jsonify
 from datetime import timedelta
-from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_flash, count_flash, get_last_update, get_chains_boundary, get_places_in_area
+from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_last_update, get_chains_boundary, get_places_in_area
 import json
+import uuid
 
 app = Flask(__name__)
 
@@ -107,31 +108,19 @@ def autocomplete():
     results = get_rx_names(search, lat, lng)
     return jsonify(matching_results=results)
 
-@app.route('/flash')
-def flash():
-    lngw = request.args.get('lngw')
-    lats = request.args.get('lats')
-    lnge = request.args.get('lnge')
-    latn = request.args.get('latn')
-    place_ids = request.args.getlist('place_id')
-    vendors = request.args.getlist('vendors')
-    
-    return get_flash(lngw, lats, lnge, latn, place_ids, vendors)
+@app.route('/flash', methods=['POST'])
 
-@app.route('/count_flash')
-def count_flashers():
-    lngw = request.args.get('lngw')
-    lats = request.args.get('lats')
-    lnge = request.args.get('lnge')
-    latn = request.args.get('latn')
+def flash_get():
+    from flash_scrape import to_sync_generator, flash_url_batch, scrape_fetch_function, prepare_flash_scrape
 
-    return count_flash(lngw, lats, lnge, latn)
+    params = request.get_json()
+    run_id = str(uuid.uuid4())
+    bounds = params['bounds']  
+    place_ids = params['place_ids']
+    fetch_datas, postcodes_to_scrape, rx_uids = prepare_flash_scrape(bounds, place_ids)
+
+    return app.response_class(to_sync_generator(flash_url_batch(fetch_datas, rx_uids, scrape_fetch_function, 30, postcodes_to_scrape, run_id)), mimetype='text/event-stream')
 
 if __name__ == '__main__':
-    # This is used when running locally only. When deploying to Google App
-    # Engine, a webserver process such as Gunicorn will serve the app. This
-    # can be configured by adding an `entrypoint` to app.yaml.
     app.run(host='127.0.0.1', port=8080, debug=True)
-# [END gae_python3_app]
-# [END gae_python38_app]
 

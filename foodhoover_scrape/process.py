@@ -1,96 +1,16 @@
-import pandas as pd
 import time
-
 import urllib
 import json
 from datetime import timedelta
 
-import numpy as np
-
 import asyncio
 from aiohttp import ClientSession
-from functools import partial
-
 from sqlalchemy.sql import text
 
+from flask import jsonify
 from connections import get_sql_client, get_bq_client, get_bq_storage, get_api_client, get_gcs_client
 
 from google.cloud import bigquery
-
-def bq_step_logger(run_id, step,status, result):
-
-    results = [{'run_id':run_id, 'step':step, 'status':status, 'result':result, 'scrape_time':'AUTO'}]
-
-    client = get_bq_client()
-    dataset = client.dataset('foodhoover_store')
-    table_ref = dataset.table('scrape_log')
-    table = client.get_table(table_ref)  # API call
-    client.insert_rows_json(table, results)
-
-    return "logged"
-
-def bq_run_scrape(run_id):
-    try:
-        client = get_bq_client()
-        bqstorageclient =get_bq_storage()
-
-        sql = "SELECT a.sector, b.postcode_area, b.postcode_district, b.postcode, b.longitude, b.latitude, b.postcode_geohash \
-            FROM rooscrape.foodhoover_store.sectors a \
-            LEFT JOIN rooscrape.foodhoover_store.postcode_lookup b ON a.closest_postcode=b.postcode \
-            WHERE closest_postcode is not null"
-
-        postcodes_to_crawl = (
-            client.query(sql)
-            .result()
-            .to_dataframe(bqstorage_client=bqstorageclient)
-        )
-
-        urls = []
-        for index, row in postcodes_to_crawl.iterrows():
-            urls.append('https://europe-west2-rooscrape.cloudfunctions.net/foodhoover?mode=availability&postcode='+row['postcode']+"&postcode_area="+row['postcode_area']+"&lat="+str(row['latitude'])+"&lng="+str(row['longitude'])+"&geohash="+row['postcode_geohash']+"&vendors=JE&vendors=UE&vendors=FH&vendors=ROO&run_id="+run_id)
-
-        url_batch_old(urls, 25)
-
-        bq_step_logger(run_id, 'SCRAPE', 'SUCESS', len(urls))
-        return len(urls) 
-    except Exception as e:
-        bq_step_logger(run_id, 'SCRAPE', 'FAIL', str(e))
-        return e   
-
-def url_batch_old(urls, batch_size):
-    # modified fetch function with semaphore
-    async def fetch(url):
-        async with ClientSession() as session:
-            async with session.get(url) as response:
-                response = await response.read()
-                print(response)
-                return response
-
-    async def bound_fetch(sem, url):
-        # Getter function with semaphore.
-        async with sem:
-            await fetch(url)
-
-    async def run(urls):
-        tasks = []
-        # create instance of Semaphore
-        sem = asyncio.Semaphore(batch_size)
-
-        # Create client session that will ensure we dont open new connection
-        # per each request.
-        async with ClientSession() as session:
-            for url in urls:
-                # pass Semaphore and session to every GET request
-                task = asyncio.ensure_future(bound_fetch(sem, url))
-                tasks.append(task)
-
-            responses = asyncio.gather(*tasks)
-            await responses
-
-    myloop = asyncio.new_event_loop()
-    asyncio.set_event_loop(myloop)
-    future = asyncio.ensure_future(run(urls))
-    myloop.run_until_complete(future)
 
 async def url_batch(fetch_datas, fetch_function, batch_size):
 
@@ -116,6 +36,114 @@ async def url_batch(fetch_datas, fetch_function, batch_size):
         
     return responses
 
+def bq_post_process(steps, run_id):
+    results = []
+    if steps == ['ALL']:
+        steps = ['INSERT','UPDATE-ROO','UPDATE-UE','MISSING-POSTCODES','UPDATE-GEOS','GET-PLACES','PROC-PLACES','CREATE-PLACES','AGG-RESULTS-DISTRICT','AGG-RESULTS-SECTOR','AGG-RESULTS-COUNTRY-POP','RX-RESULTS-FAST','AGG-RX-CX','EXPORT-PLACES','EXPORT-RX-REF','EXPORT-AGG-SECTOR-RUN','EXPORT-AGG-DISTRICT-RUN','EXPORT-AGG-COUNTRY-RUN-POP','EXPORT-AGG-RX-CX']
+    for step in steps:
+        if step == 'INSERT':
+            result = step+": "+str(bq_insert_new_rx(run_id))
+            results.append(result)
+            yield result
+        elif step == 'UPDATE-ROO': 
+            result = step+": "+str(bq_crawl_roo(run_id))
+            results.append(result)
+            yield result
+        elif step == 'UPDATE-UE':
+            result = step+": "+str(bq_crawl_ue(run_id))
+            results.append(result)
+            yield result
+        elif step == 'MISSING-POSTCODES':
+            result = step+": "+str(bq_update_missing_postcodes(run_id))
+            results.append(result)
+            yield result        
+        elif step == 'UPDATE-GEOS':
+            result = step+": "+str(bq_update_geos(run_id))
+            results.append(result)
+            yield result
+        elif step == 'GET-PLACES':
+            result = step+": "+str(bq_get_places(run_id))
+            results.append(result)
+            yield result
+        elif step == 'PROC-PLACES':
+            result = step+": "+str(bq_places_proc(run_id))
+            results.append(result)
+            yield result
+        elif step == 'CREATE-PLACES':
+            result = step+": "+str(bq_places_table(run_id))
+            results.append(result)  
+            yield result 
+        elif step == 'AGG-RESULTS-DISTRICT':
+            result = step+": "+str(bq_agg_results_district(run_id))
+            results.append(result)
+            yield result
+        elif step == 'AGG-RESULTS-SECTOR':
+            result = step+": "+str(bq_agg_results_sector(run_id))
+            results.append(result)
+            yield result
+        elif step == 'RX-RESULTS-FAST':
+            result = step+": "+str(bq_agg_rx_results_fast(run_id))
+            results.append(result)
+            yield result
+        elif step == 'AGG-RESULTS-COUNTRY-POP':
+            result = step+": "+str(bq_agg_results_country_pop(run_id))
+            results.append(result)
+            yield result
+        elif step == 'AGG-RX-CX':
+            result = step+": "+str(bq_agg_rx_cx(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-PLACES':
+            result = step+": "+str(bq_export_places(run_id))
+            results.append(result)   
+            yield result 
+        elif step == 'EXPORT-RX-CX-RESULTS':
+            result = step+": "+str(bq_export_rx_cx_results(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-RX-REF':
+            result = step+": "+str(bq_export_rx_ref(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-AGG-SECTOR-RUN':
+            result = step+": "+str(bq_export_agg_sector_run(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-AGG-DISTRICT-RUN':
+            result = step+": "+str(bq_export_agg_district_run(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-AGG-COUNTRY-RUN':
+            result = step+": "+str(bq_export_agg_country_run(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-AGG-COUNTRY-RUN-POP':
+            result = step+": "+str(bq_export_agg_country_run_pop(run_id))
+            results.append(result)
+            yield result
+        elif step == 'EXPORT-AGG-RX-CX':
+            result = step+": "+str(bq_export_agg_rx_cx(run_id))
+            results.append(result)
+            yield result
+        else:
+            result = step+ ": Step not found"
+            results.append(result)
+            yield result
+    
+    yield "DONE PROCESS"
+
+def bq_step_logger(run_id, step,status, result):
+
+    results = [{'run_id':run_id, 'step':step, 'status':status, 'result':result, 'scrape_time':'AUTO'}]
+
+    client = get_bq_client()
+    dataset = client.dataset('foodhoover_store')
+    table_ref = dataset.table('scrape_log')
+    table = client.get_table(table_ref)  # API call
+    client.insert_rows_json(table, results)
+
+    return "logged"
+
 def bq_insert_new_rx(run_id):
     try:
         client = get_bq_client()
@@ -136,16 +164,16 @@ def bq_insert_new_rx(run_id):
         MERGE "+table_id+" ref \
         USING \
             (select CONCAT(rx_slug,'-',vendor) as rx_uid, max(rx_slug) as rx_slug, max(vendor) as vendor, max(rx_name) as rx_name,max(rx_postcode) as rx_postcode, \
-            max(rx_lat) as rx_lat, max(rx_lng) as rx_lng, max(rx_menu) as rx_menu \
+            max(rx_lat) as rx_lat, max(rx_lng) as rx_lng, max(rx_menu) as rx_menu, max(rx_meta) as rx_meta \
             FROM rooscrape.foodhoover_store.rx_cx_results_raw \
             WHERE rx_slug is not null \
             "+ where_clause + "\
             AND vendor is not null group by rx_uid) results \
         ON ref.rx_uid = results.rx_uid \
         WHEN MATCHED THEN \
-        UPDATE SET ref.rx_slug = coalesce(results.rx_slug,ref.rx_slug), ref.vendor = coalesce(results.vendor,ref.vendor), ref.rx_name = coalesce(results.rx_name,ref.rx_name), ref.rx_postcode=coalesce(results.rx_postcode,ref.rx_postcode), ref.rx_lat=coalesce(results.rx_lat,ref.rx_lat), ref.rx_lng=coalesce(results.rx_lng,ref.rx_lng),ref.rx_menu=coalesce(results.rx_menu,ref.rx_menu) \
+        UPDATE SET ref.rx_slug = coalesce(results.rx_slug,ref.rx_slug), ref.vendor = coalesce(results.vendor,ref.vendor), ref.rx_name = coalesce(results.rx_name,ref.rx_name), ref.rx_postcode=coalesce(results.rx_postcode,ref.rx_postcode), ref.rx_lat=coalesce(results.rx_lat,ref.rx_lat), ref.rx_lng=coalesce(results.rx_lng,ref.rx_lng),ref.rx_menu=coalesce(results.rx_menu,ref.rx_menu),ref.rx_meta=coalesce(results.rx_meta,ref.rx_meta) \
         WHEN NOT MATCHED THEN \
-        INSERT (rx_uid, rx_slug, vendor, rx_name, rx_postcode, rx_lat, rx_lng, rx_menu) VALUES(results.rx_uid, results.rx_slug, results.vendor, results.rx_name, results.rx_postcode, results.rx_lat,results.rx_lng, results.rx_menu) \
+        INSERT (rx_uid, rx_slug, vendor, rx_name, rx_postcode, rx_lat, rx_lng, rx_menu, rx_meta) VALUES(results.rx_uid, results.rx_slug, results.vendor, results.rx_name, results.rx_postcode, results.rx_lat,results.rx_lng, results.rx_menu, results.rx_meta) \
         "
         query_job = client.query(sql)  # API request
         rows = query_job.result()
@@ -160,7 +188,7 @@ def bq_insert_new_rx(run_id):
         bq_step_logger(run_id, 'INSERT', 'FAIL', str(e))
         return e    
 
-def bq_update_ue_sectors(run_id):
+def bq_update_missing_postcodes(run_id):
     try:
         client = get_bq_client()
         table_id = 'rooscrape.foodhoover_store.rx_ref'
@@ -180,50 +208,209 @@ def bq_update_ue_sectors(run_id):
         query_job.result() 
     
         num_rows_added = query_job.num_dml_affected_rows
-        bq_step_logger(run_id, 'UPDATE-UE', 'SUCESS', num_rows_added)
+        bq_step_logger(run_id, 'MISSING-POSTCODES', 'SUCESS', num_rows_added)
         return "Done UE"
     except Exception as e:
-        bq_step_logger(run_id, 'UPDATE-UE', 'FAIL', str(e))
-        return e    
+        bq_step_logger(run_id, 'MISSING-POSTCODES', 'FAIL', str(e))
+        return e   
 
 def bq_crawl_roo(run_id):
     try:
         client = get_bq_client()
+        ###get the roo ones missing a postcode from rx_ref, but have an id
+        missing_sql = "select rx_meta from rooscrape.foodhoover_store.rx_ref where vendor='ROO' and rx_postcode is null and rx_meta is not null limit 1000"
+        query_job = client.query(missing_sql)
+
+        fetch_datas = []
+        for row in query_job.result():
+            fetch_datas.append(row['rx_meta'])
+
+        num_roo_to_crawl = len(fetch_datas)
+
+        async def roo_fetch_function(fetch_data):
+            uri = "https://europe-west2-rooscrape.cloudfunctions.net/foodhoover_get?mode=roo&rx_id="+fetch_data
+
+            async with ClientSession() as session:
+                try:
+                    async with session.get(uri) as response:
+                        response = await response.read()
+                        results = json.loads(response.decode('utf8'))
+                        return results
+                except Exception as e:
+                        print(str(e))
+
+        chunk_size = 10
+        fetch_data_chunks = ['&rx_id='.join(fetch_datas[x:x+chunk_size]) for x in range(0, len(fetch_datas), chunk_size)]
+        scrape_results = asyncio.run(url_batch(fetch_data_chunks, roo_fetch_function, 30))
+
+        roo_rxs = []
+        for result_batch in scrape_results:
+            for roo_rx in result_batch:
+                if roo_rx['scrape_status']=='OK':
+                    roo_rxs.append(roo_rx['roo_details'])
+
+        client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')   
+        #write the roo_data
+        job_config = bigquery.LoadJobConfig(
+            schema=[
+                bigquery.SchemaField("scrape_time", bigquery.enums.SqlTypeNames.TIMESTAMP),
+                bigquery.SchemaField("rx_id", bigquery.enums.SqlTypeNames.INTEGER),
+                bigquery.SchemaField("rx_name", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_slug", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_neighbourhood", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_city", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_lat", bigquery.enums.SqlTypeNames.FLOAT),
+                bigquery.SchemaField("rx_lng", bigquery.enums.SqlTypeNames.FLOAT),
+                bigquery.SchemaField("rx_prep_time", bigquery.enums.SqlTypeNames.INTEGER),
+                bigquery.SchemaField("rx_address", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_postcode", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_fulfillment_type", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_menu_page", bigquery.enums.SqlTypeNames.STRING),
+                ],
+            write_disposition="WRITE_APPEND",
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+        )
+        job = client.load_table_from_json(roo_rxs, "rooscrape.foodhoover_store.roo_cache",job_config=job_config)
+        job.result()
+
+        num_roo_cache_added = len(roo_rxs)
 
         ##query to merge rx_ref with the most recent row in roo_cache (we run this twice, before and after the scrape)
         sql = " \
-        MERGE rooscrape.foodhoover_store.rx_ref ref \
-        USING \
-        (SELECT rx_slug, string_agg(rx_name ORDER BY scrape_time DESC LIMIT 1) as rx_name, string_agg(rx_postcode ORDER BY scrape_time DESC LIMIT 1) as rx_postcode \
-        FROM rooscrape.foodhoover_store.roo_cache \
-        GROUP BY rx_slug) roo_cache \
-        ON ref.rx_slug = roo_cache.rx_slug and ref.vendor='ROO' \
-        WHEN MATCHED THEN \
-        UPDATE SET ref.rx_postcode=COALESCE(ref.rx_postcode,roo_cache.rx_postcode), ref.rx_name=COALESCE(ref.rx_name,roo_cache.rx_name)"
-
+            MERGE rooscrape.foodhoover_store.rx_ref ref \
+            USING \
+            (SELECT\
+                rx_slug,\
+                ARRAY_AGG(rx_name ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_name,\
+                ARRAY_AGG(rx_postcode ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_postcode,\
+                ARRAY_AGG(rx_lat ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_lat,\
+                ARRAY_AGG(rx_lng ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_lng,\
+            FROM rooscrape.foodhoover_store.roo_cache \
+            GROUP BY rx_slug) roo_cache \
+            ON ref.rx_slug = roo_cache.rx_slug and ref.vendor='ROO' \
+            WHEN MATCHED THEN \
+            UPDATE SET\
+                ref.rx_postcode=COALESCE(roo_cache.rx_postcode, ref.rx_postcode),\
+                ref.rx_name=COALESCE(roo_cache.rx_name,ref.rx_name),\
+                ref.rx_lat=COALESCE(roo_cache.rx_lat,ref.rx_lat),\
+                ref.rx_lng=COALESCE(roo_cache.rx_lng,ref.rx_lng)\
+            "
         query_job = client.query(sql) 
         query_job.result()
 
-        ###get the roo ones missing a postcode from rx_ref
-        missing_sql = "select rx_menu from rooscrape.foodhoover_store.rx_ref where vendor='ROO' and rx_name is null limit 1000"
-        query_job = client.query(missing_sql)
-        query_job.result() 
+        num_roo_rx_updated = query_job.num_dml_affected_rows
 
-        rx_set = []
-        for row in query_job.result():
-            rx_set.append("https://europe-west2-rooscrape.cloudfunctions.net/foodhoover?mode=roo_rx&rx_url=https://deliveroo.co.uk"+row['rx_menu']+"&full_log=No")
-        url_batch_old(rx_set, 50)
+        status = {
+            'Rx crawled' : num_roo_to_crawl ,
+            'Rx added to cache' : num_roo_cache_added,
+            'Rx updated' : num_roo_rx_updated
+        }
 
-        ##now do the merge again
-        query_job = client.query(sql)
-        query_job.result() 
-    
-        num_rows_added = query_job.num_dml_affected_rows
-        bq_step_logger(run_id, 'UPDATE-ROO', 'SUCESS', num_rows_added)
-        return num_rows_added
+        bq_step_logger(run_id, 'UPDATE-ROO', 'SUCESS',num_roo_cache_added)
+        return json.dumps(status)
     except Exception as e:
         bq_step_logger(run_id, 'UPDATE-ROO', 'FAIL', str(e))
-        return e    
+        return e        
+
+def bq_crawl_ue(run_id):
+    try:
+        client = get_bq_client()
+        ###get the ue ones missing a postcode from rx_ref, but have an id
+        missing_sql = "select rx_slug from rooscrape.foodhoover_store.rx_ref where vendor='UE' and rx_postcode is null and rx_slug is not null limit 1000"
+        query_job = client.query(missing_sql)
+
+        fetch_datas = []
+        for row in query_job.result():
+            fetch_datas.append(row['rx_slug'])
+
+        num_ue_to_crawl = len(fetch_datas)
+
+        async def ue_fetch_function(fetch_data):
+            uri = "https://europe-west2-rooscrape.cloudfunctions.net/foodhoover_get?mode=ue&rx_id="+fetch_data
+
+            async with ClientSession() as session:
+                try:
+                    async with session.get(uri) as response:
+                        response = await response.read()
+                        results = json.loads(response.decode('utf8'))
+                        return results
+                except Exception as e:
+                        print(str(e))
+
+        chunk_size = 10
+        fetch_data_chunks = ['&rx_id='.join(fetch_datas[x:x+chunk_size]) for x in range(0, len(fetch_datas), chunk_size)]
+        scrape_results = asyncio.run(url_batch(fetch_data_chunks, ue_fetch_function, 30))
+
+        ue_rxs = []
+        for result_batch in scrape_results:
+            for ue_rx in result_batch:
+                if ue_rx['scrape_status']=='OK':
+                    ue_rxs.append(ue_rx['ue_details'])
+
+        client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')   
+        #write the ue_data
+        job_config = bigquery.LoadJobConfig(
+            schema=[
+                bigquery.SchemaField("scrape_time", bigquery.enums.SqlTypeNames.TIMESTAMP),
+                bigquery.SchemaField("rx_id", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_name", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_slug", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_neighbourhood", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_city", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_lat", bigquery.enums.SqlTypeNames.FLOAT),
+                bigquery.SchemaField("rx_lng", bigquery.enums.SqlTypeNames.FLOAT),
+                bigquery.SchemaField("rx_prep_time", bigquery.enums.SqlTypeNames.INTEGER),
+                bigquery.SchemaField("rx_address", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_postcode", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_fulfillment_type", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_menu_page", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_blob", bigquery.enums.SqlTypeNames.STRING)
+                ],
+            write_disposition="WRITE_APPEND",
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+        )
+        job = client.load_table_from_json(ue_rxs, "rooscrape.foodhoover_store.ue_cache",job_config=job_config)
+        job.result()
+
+        num_ue_cache_added = len(ue_rxs)
+
+        ##query to merge rx_ref with the most recent row in roo_cache (we run this twice, before and after the scrape)
+        sql = " \
+            MERGE rooscrape.foodhoover_store.rx_ref ref \
+            USING \
+            (SELECT\
+                rx_slug,\
+                ARRAY_AGG(rx_name ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_name,\
+                ARRAY_AGG(rx_postcode ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_postcode,\
+                ARRAY_AGG(rx_lat ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_lat,\
+                ARRAY_AGG(rx_lng ORDER BY scrape_time DESC LIMIT 1)[offset(0)] as rx_lng,\
+            FROM rooscrape.foodhoover_store.ue_cache \
+            GROUP BY rx_slug) ue_cache \
+            ON ref.rx_slug = ue_cache.rx_slug and ref.vendor='UE' \
+            WHEN MATCHED THEN \
+            UPDATE SET\
+                ref.rx_postcode=COALESCE(ue_cache.rx_postcode, ref.rx_postcode),\
+                ref.rx_name=COALESCE(ue_cache.rx_name,ref.rx_name),\
+                ref.rx_lat=COALESCE(ue_cache.rx_lat,ref.rx_lat),\
+                ref.rx_lng=COALESCE(ue_cache.rx_lng,ref.rx_lng)\
+            "
+        query_job = client.query(sql) 
+        query_job.result()
+
+        num_ue_rx_updated = query_job.num_dml_affected_rows
+
+        status = {
+            'Rx crawled' : num_ue_to_crawl ,
+            'Rx added to cache' : num_ue_cache_added,
+            'Rx updated' : num_ue_rx_updated
+        }
+
+        bq_step_logger(run_id, 'UPDATE-UE', 'SUCESS',num_ue_cache_added)
+        return json.dumps(status)
+    except Exception as e:
+        bq_step_logger(run_id, 'UPDATE-UE', 'FAIL', str(e))
+        return e   
+
 
 def bq_update_geos(run_id):
     try:
@@ -589,53 +776,7 @@ def bq_agg_results_country_pop(run_id):
         return num_rows_added  
     except Exception as e:
         bq_step_logger(run_id, 'AGGREGATE-COUNTRY-POP', 'FAIL', str(e))
-        return e      
-
-
-def bq_agg_results_country(run_id):
-    try:
-        client = get_bq_client()
-        table_id = 'rooscrape.foodhoover_store.agg_country_run'
-
-        table = client.get_table(table_id)
-        num_rows_begin = table.num_rows
-
-        if run_id=='full': ## this is the tag we to remove the where clause and compute for all runids
-            where_clause = ""
-            sql = "DELETE FROM "+table_id+" WHERE 1=1" ##empty the current table
-            query_job = client.query(sql)  # API request
-            query_job.result()
-        else:
-            where_clause = " WHERE b.run_id = '"+run_id+"' "
-        
-        sql = " \
-            MERGE "+table_id+"  q \
-            USING \
-            (SELECT 'uk' as country, b.run_id, max(b.scrape_time) as scrape_time, \
-            count(distinct case when b.vendor='ROO' then b.rx_slug else null end) as ROO, \
-            count(distinct case when b.vendor='JE' then b.rx_slug else null end) as JE, \
-            count(distinct case when b.vendor='UE' then b.rx_slug else null end) as UE, \
-            count(distinct case when b.vendor='FH' then b.rx_slug else null end) as FH \
-            FROM rooscrape.foodhoover_store.rx_cx_results_raw b \
-            "+ where_clause + "\
-            group by country, b.run_id) p \
-            ON q.run_id=p.run_id and q.country=p.country \
-            WHEN MATCHED THEN \
-            UPDATE SET q.scrape_time = p.scrape_time, q.roo=p.roo,q.je=p.je, q.ue=p.ue, q.fh=p.fh \
-            WHEN NOT MATCHED THEN \
-            INSERT (country, run_id, scrape_time, roo, je, ue, fh) VALUES ('uk', p.run_id, p.scrape_time, p.roo, p.je, p.ue, p.fh) \
-            "
-        query_job = client.query(sql)  # API request
-        rows = query_job.result()
-
-        table = client.get_table(table_id)
-        num_rows_added = table.num_rows - num_rows_begin
-
-        bq_step_logger(run_id, 'AGGREGATE-COUNTRY', 'SUCESS', num_rows_added)
-        return num_rows_added  
-    except Exception as e:
-        bq_step_logger(run_id, 'AGGREGATE-COUNTRY', 'FAIL', str(e))
-        return e      
+        return e       
 
 def bq_agg_rx_results_fast(run_id):
     try:
@@ -687,40 +828,48 @@ def bq_agg_rx_cx(run_id):
         sql = "SELECT MAX(scrape_time) as last_date FROM rooscrape.foodhoover_store.agg_country_run"
         query_job = client.query(sql)  # API request
         rows = query_job.result()
-        row = rows.next()
-        end = row['last_date']
+        #row = next(rows)
+        end = list(rows)[0]['last_date']
         start = end - timedelta(days=14)
 
         end_date = end.strftime('%Y-%m-%d')
         start_date = start.strftime('%Y-%m-%d')
         
         table_id = 'rooscrape.foodhoover_store.agg_rx_cx'
-        client.delete_table(table_id, not_found_ok=True)
+        client.delete_table(table_id, not_found_ok=True) 
 
         sql = "\
             CREATE TABLE rooscrape.foodhoover_store.agg_rx_cx\
-            CLUSTER BY\
-            place_id\
+            CLUSTER BY place_id\
             AS\
             SELECT\
                 places.place_id,\
-                ref.vendor,\
+                bysector.vendor,\
                 ST_SIMPLIFY(ST_UNION_AGG(sectors.geometry),50) as delivery_zone,\
                 SUM(sectors.population) as delivery_population,\
                 max(places.place_name) as place_name,\
                 max(places.place_lat) as place_lat,\
                 max(places.place_lng) as place_lng,\
-                ARRAY_AGG(DISTINCT(ref.rx_uid) IGNORE NULLS) as vendor_rx,\
-                ARRAY_AGG(DISTINCT(postcode_sector) IGNORE NULLS) as sectors_covered\
+                ARRAY_CONCAT_AGG(vendor_rx LIMIT 1) as vendor_rx,\
+                ARRAY_AGG(DISTINCT(sectors.sector) IGNORE NULLS) as sectors_covered\
             FROM (\
-                SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                WHERE scrape_time>='"+start_date+"' and scrape_time<='"+end_date+"'\
-                GROUP BY rx_uid, cx_postcode) results\
-            LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
-            LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
-            RIGHT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
-            LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
-            GROUP BY places.place_id, ref.vendor\
+                SELECT\
+                places.place_id,\
+                ref.vendor,\
+                sectors.sector,\
+                ARRAY_AGG(DISTINCT(ref.rx_uid) IGNORE NULLS) as vendor_rx,\
+                FROM (\
+                    SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
+                    WHERE scrape_time>='"+start_date+"' and scrape_time<='"+end_date+"'\
+                    GROUP BY rx_uid, cx_postcode) results\
+                LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
+                LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
+                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
+                LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
+                GROUP BY places.place_id, ref.vendor, sectors.sector) bysector\
+            LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = bysector.sector\
+            RIGHT JOIN rooscrape.foodhoover_store.places places on places.place_id = bysector.place_id\
+            GROUP BY places.place_id, bysector.vendor\
         "
 
         query_job = client.query(sql)  # API request
@@ -733,31 +882,6 @@ def bq_agg_rx_cx(run_id):
         return num_rows_added
     except Exception as e:
         bq_step_logger(run_id, 'AGG-RX-CX', 'FAIL', str(e))
-        return e
-
-def bq_to_sql_via_client(run_id): ###########not currently used
-    try:
-        client = get_bq_client()
-        bqstorageclient = get_bq_storage()
-
-        table_id = 'foodhoover_store.rx_cx_results_raw'
-        sql = "select scrape_time, CONCAT(rx_slug,'-',vendor) as rx_uid, cx_postcode from "+table_id+" where run_id='"+run_id+"'"
-
-        rx_cx_results_fast = (
-            client.query(sql)
-            .result()
-            .to_dataframe(bqstorage_client=bqstorageclient)
-        )
-
-        engine = get_sql_client('foodhoover_cache')
-        conn = engine.connect()
-        rx_cx_results_fast.set_index('rx_uid').to_sql('rx_cx_fast', conn, if_exists='append', method='multi', chunksize=10000, index=True)
-
-        bq_step_logger(run_id, 'EXPORT-RX-CX-RESULTS', 'SUCESS', rx_cx_results_fast.shape[0])
-        return rx_cx_results_fast.shape[0] 
-
-    except Exception as e:
-        bq_step_logger(run_id, 'EXPORT-RX-CX-RESULTS', 'FAIL', str(e))
         return e
 
 def write_bq_table(table_ref, sql):

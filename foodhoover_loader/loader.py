@@ -117,7 +117,7 @@ def sector_manipulations():
     table_id = "rooscrape.foodhoover_store.sectors"
     
     ###update the geometry column
-    sql = "UPDATE "+table_id+ " SET geometry=IFNULL(SAFE.ST_GEOGFROMGEOJSON(json_geometry),ST_GEOGFROMGEOJSON(json_geometry, make_valid => TRUE)) where json_geometry is not null "
+    sql = "UPDATE "+table_id+ " SET geometry=ST_SIMPLIFY(IFNULL(SAFE.ST_GEOGFROMGEOJSON(json_geometry),ST_GEOGFROMGEOJSON(json_geometry, make_valid => TRUE)),5) where json_geometry is not null "
     job = client.query(sql)
     job.result()
 
@@ -206,7 +206,7 @@ def district_manipulations():
     table_id = "rooscrape.foodhoover_store.districts"
     
     ###update the geometry column
-    sql = "UPDATE "+table_id+ " SET geometry= ST_SnapToGrid(IFNULL(SAFE.ST_GEOGFROMGEOJSON(json_geometry),ST_GEOGFROMGEOJSON(json_geometry, make_valid => TRUE)),0.00001) where json_geometry is not null"
+    sql = "UPDATE "+table_id+ " SET geometry= ST_SIMPLIFY(IFNULL(SAFE.ST_GEOGFROMGEOJSON(json_geometry),ST_GEOGFROMGEOJSON(json_geometry, make_valid => TRUE)),100) where json_geometry is not null"
     job = client.query(sql)
     job.result()
 
