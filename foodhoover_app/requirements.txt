@@ -2,7 +2,7 @@ Flask[async]==2.0.1
 google-auth
 flask-cachebuster
 SQLAlchemy
-psycopg2
+psycopg2-binary==2.8.6
 asyncio
 aiohttp
 google-cloud-bigquery==2.7.0

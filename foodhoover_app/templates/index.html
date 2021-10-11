@@ -170,6 +170,7 @@
             border-spacing: 2px;
             border-collapse: separate;
             font-size: clamp(10px, 2vmin, 18px);
+            width: 100%;
         }
         .GeoPopCoverage td, .GeoPopCoverage th{
             margin-bottom: 5px;
@@ -292,7 +293,7 @@
 
     <div class='footer'>
         <span style='float:left'> <a href='https://github.com/padwyatt/foodhoover'>About Foodhoover</a></span>
-        <span style='float:right'> Last full data update (UTC): {{last_update.strftime('%Y-%m-%d %H:%M:%S')}}</span> 
+        <span style='float:right'> Last full update: {{last_update.strftime('%Y-%m-%d')}}</span> 
     </div>
 
     <div id="loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});"></div>
@@ -312,7 +313,8 @@
     //variables
     var start = moment('{{start}}','YYYY-MM-DD')
     var end = moment('{{end}}','YYYY-MM-DD')
-    var default_vendor='ROO'
+    var fulfillment_type = '{{delivery}}'
+    var default_vendor='{{vendor}}'
     var info_window_loading = false
     var tab_name = '{{tab_name}}'
     var granularity = 'districts' //sets initial granularity of data on country map
@@ -391,6 +393,7 @@
             'Today': [moment(), moment()],
             'Yesterday': [moment().subtract(1, 'days'), moment().subtract(1, 'days')],
             'Last 7 Days': [moment().subtract(6, 'days'), moment()],
+            'Last 14 Days': [moment().subtract(13, 'days'), moment()],
             'Last 30 Days': [moment().subtract(29, 'days'), moment()],
             'This Month': [moment().startOf('month'), moment().endOf('month')],
             'Last Month': [moment().subtract(1, 'month').startOf('month'), moment().subtract(1, 'month').endOf('month')]

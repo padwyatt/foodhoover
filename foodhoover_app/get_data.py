@@ -5,41 +5,156 @@ from google.cloud import bigquery
 import json
 from datetime import timedelta
 
+
+def get_country_fulfillment_data(start, end, lngw, lats, lnge, lngn, granularity):
+    if granularity=='districts':
+        sql = text("""
+            SELECT jsonb_build_object(
+                'type',     'FeatureCollection',
+                'features', jsonb_agg(feature)
+                ) as geometry
+            FROM (
+                SELECT
+                    districts.district,
+                    jsonb_build_object(
+                        'type',       'Feature',
+                        'id',         districts.district,
+                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(MAX(districts.geometry),0.001)),3))::jsonb,
+                        'properties', to_jsonb(
+                            jsonb_build_object(
+                                'postcode_name', districts.district,
+                                'rx_counts', jsonb_object_agg(COALESCE(counts.fulfillment_type,'None'), counts.counts)
+                            )
+                        )
+                    ) as feature
+                    FROM districts
+                    LEFT JOIN
+                        (SELECT
+                            postcode_district,
+                            fulfillment_type,
+                            jsonb_build_object(
+                                'ROO', MAX(CASE WHEN vendor='ROO' THEN rx_num ELSE 0 END),
+                                'UE', MAX(CASE WHEN vendor='UE' THEN rx_num ELSE 0 END),
+                                'JE', MAX(CASE WHEN vendor='JE' THEN rx_num ELSE 0 END),
+                                'FH', MAX(CASE WHEN vendor='FH' THEN rx_num ELSE 0 END)
+                            ) as counts
+                        FROM agg_district_fulfillment_day
+                        WHERE scrape_date>=:start and scrape_date<=:end and fulfillment_type is not null
+                        GROUP BY postcode_district, fulfillment_type) counts
+                    ON counts.postcode_district=districts.district
+                    GROUP BY districts.district
+            ) agg
+        """)
+    elif granularity=='sectors': ###this one could perhaps be faster by putting the geofilter inside the subquery
+        sql = text("""
+            SELECT jsonb_build_object(
+                'type',     'FeatureCollection',
+                'features', jsonb_agg(feature)
+                ) as geometry
+            FROM (
+                SELECT
+                    sectors.sector,
+                    jsonb_build_object(
+                        'type',       'Feature',
+                        'id',         sectors.sector,
+                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(MAX(sectors.geometry),0.001)),3))::jsonb,,
+                        'properties', to_jsonb(
+                            jsonb_build_object(
+                                'postcode_name', sectors.sector,
+                                'rx_counts', jsonb_object_agg(COALESCE(counts.fulfillment_type,'None'), counts.counts)
+                            )
+                        )
+                    ) as feature
+                    FROM sectors
+                    LEFT JOIN
+                        (SELECT
+                            postcode_sector,
+                            fulfillment_type,
+                            jsonb_build_object(
+                                'ROO', MAX(CASE WHEN vendor='ROO' THEN rx_num ELSE 0 END),
+                                'UE', MAX(CASE WHEN vendor='UE' THEN rx_num ELSE 0 END),
+                                'JE', MAX(CASE WHEN vendor='JE' THEN rx_num ELSE 0 END),
+                                'FH', MAX(CASE WHEN vendor='FH' THEN rx_num ELSE 0 END)
+                            ) as counts
+                        FROM agg_sector_fulfillment_day
+                        WHERE scrape_date>=:start and scrape_date<=:end and fulfillment_type is not null
+                        GROUP BY postcode_sector, fulfillment_type) counts
+                    ON counts.postcode_sector=sectors.sector
+                    WHERE sectors.geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn)
+                    GROUP BY sectors.sector
+            ) agg
+        """)
+    else:
+        return 'granularity not specified'
+
+    engine = get_sql_client('foodhoover_cache')
+    conn = engine.connect()
+    result = conn.execute(sql, start=start, end=end, lngw=lngw, lats=lats, lnge=lnge, lngn=lngn)
+    coverage_map = result.fetchone()['geometry']
+
+    sql = text("""
+        SELECT vendor, jsonb_object_agg(COALESCE(fulfillment_type, 'None'), fulfillment_stats) as country_stats
+        FROM (
+            SELECT vendor,
+            fulfillment_type,
+            jsonb_build_object(
+                'delivery_population',COALESCE(MAX(delivery_population),0),
+                'rx_num', COALESCE(MAX(rx_num),0)
+                ) as fulfillment_stats
+            FROM agg_country_fulfillment_day
+            WHERE scrape_date>=:start AND scrape_date<=:end and fulfillment_type is not null
+            GROUP BY vendor, fulfillment_type
+            ) q
+        GROUP BY vendor
+    """)
+
+    engine = get_sql_client('foodhoover_cache')
+    conn = engine.connect()
+    result = conn.execute(sql, start=start, end=end)
+
+    country_stats = {}
+    for r in result:
+        country_stats[r['vendor']]=r['country_stats']
+
+    return {'coverage':coverage_map,'stats':country_stats}
+
+
 def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
     if granularity=='districts':
-        sql = text("\
-            SELECT jsonb_build_object(\
-                'type',     'FeatureCollection',\
-                'features', jsonb_agg(feature)\
-                ) as geometry\
-            FROM (\
-                SELECT\
-                    districts.district,\
-                    jsonb_build_object(\
-                        'type',       'Feature',\
-                        'id',         districts.district,\
-                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(districts.geometry,0.001)),3))::jsonb,\
-                        'properties', to_jsonb(\
-                            jsonb_build_object(\
-                                'postcode_name', districts.district,\
-                                'ROO', counts.roo, 'JE',counts.je, 'UE',counts.ue, 'FH',counts.fh\
-                            )\
-                        )\
-                    ) as feature\
-                    FROM districts\
-                    LEFT JOIN\
-                        (SELECT\
-                            postcode_district,\
-                            MAX(roo) as roo,\
-                            MAX(je) as je,\
-                            MAX(ue) as ue,\
-                            MAX(fh) as fh\
-                        FROM agg_district_run z\
-                        WHERE DATE_TRUNC('day',scrape_time)>=:start and DATE_TRUNC('day',scrape_time)<=:end\
-                        GROUP by postcode_district) counts\
-                    ON counts.postcode_district=districts.district\
-            ) agg\
-        ")
+        sql = text("""
+            SELECT jsonb_build_object(
+                'type',     'FeatureCollection',
+                'features', jsonb_agg(feature)
+                ) as geometry
+            FROM (
+                SELECT
+                    districts.district,
+                    jsonb_build_object(
+                        'type',       'Feature',
+                        'id',         districts.district,
+                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(districts.geometry,0.001)),3))::jsonb,
+                        'properties', to_jsonb(
+                            jsonb_build_object(
+                                'postcode_name', districts.district,
+                                'ROO', counts.roo, 'JE',counts.je, 'UE',counts.ue, 'FH',counts.fh
+                            )
+                        )
+                    ) as feature
+                    FROM districts
+                    LEFT JOIN
+                        (SELECT
+                            postcode_district,
+                            MAX(CASE WHEN vendor='ROO' THEN rx_num ELSE 0 END) as roo,
+                            MAX(CASE WHEN vendor='UE' THEN rx_num ELSE 0 END) as ue,
+                            MAX(CASE WHEN vendor='JE' THEN rx_num ELSE 0 END) as je,
+                            MAX(CASE WHEN vendor='FH' THEN rx_num ELSE 0 END) as fh
+                        FROM agg_district_fulfillment_day
+                        WHERE scrape_date>=:start and scrape_date<=:end
+                        AND fulfillment_type='vendor'
+                        GROUP BY postcode_district) counts
+                    ON counts.postcode_district=districts.district
+            ) agg
+        """)
     elif granularity=='sectors':
         sql = text("  \
             SELECT jsonb_build_object( \
@@ -62,14 +177,15 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
                     ) as feature \
                 FROM ( \
                     SELECT b.sector as postcode_sector, \
-                    max(ST_CollectionExtract(b.geometry,3)) as geometry, \
-                    MAX(a.roo) as roo, \
-                    MAX(a.je) as je, \
-                    MAX(a.ue) as ue, \
-                    MAX(a.fh) as fh \
-                    FROM agg_sector_run a \
+                        MAX(ST_CollectionExtract(b.geometry,3)) as geometry, \
+                        MAX(CASE WHEN vendor='ROO' THEN rx_num ELSE 0 END) as roo,\
+                        MAX(CASE WHEN vendor='UE' THEN rx_num ELSE 0 END) as ue,\
+                        MAX(CASE WHEN vendor='JE' THEN rx_num ELSE 0 END) as je,\
+                        MAX(CASE WHEN vendor='FH' THEN rx_num ELSE 0 END) as fh\
+                    FROM agg_sector_fulfillment_day a \
                     INNER JOIN sectors b ON a.postcode_sector=b.sector \
-                    WHERE DATE_TRUNC('day',a.scrape_time)>=:start and DATE_TRUNC('day',a.scrape_time)<=:end \
+                    WHERE scrape_date>=:start and scrape_date<=:end\
+                    AND fulfillment_type='vendor'\
                     AND geometry && ST_MakeEnvelope(:lngw,:lats,:lnge,:lngn) \
                     GROUP by b.sector \
                 ) as agg \
@@ -85,11 +201,12 @@ def get_country_data(start, end, lngw, lats, lnge, lngn, granularity):
 
     sql = text("\
         SELECT vendor,jsonb_build_object(\
-            'delivery_population',MAX(delivery_population),\
-            'rx_num', MAX(rx_num)\
+            'delivery_population',COALESCE(MAX(delivery_population),0),\
+            'rx_num', COALESCE(MAX(rx_num),0)\
             ) as country_stats\
-        FROM agg_country_run_pop\
-        WHERE DATE_TRUNC('day',scrape_time)>=:start AND DATE_TRUNC('day',scrape_time)<=:end\
+        FROM agg_country_fulfillment_day\
+        WHERE scrape_date>=:start AND scrape_date<=:end\
+        AND fulfillment_type='vendor'\
         GROUP BY vendor\
     ")
 
@@ -233,7 +350,7 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                     )\
                 )\
             ) as feature\
-        FROM agg_rx_cx\
+        FROM agg_delivery_zone\
         where place_id IN :place_ids\
         ) as places\
     GROUP by places.place_id\
@@ -302,17 +419,17 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                         sectors.sector,\
                         ARRAY_AGG(DISTINCT(ref.rx_uid) IGNORE NULLS) as vendor_rx,\
                         FROM (\
-                            SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                            WHERE scrape_time>='"+start+"' and scrape_time<='"+end+"'\
+                            SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_scrape\
+                            WHERE DATE(scrape_time)>='"+start+"' and DATE(scrape_time)<='"+end+"'\
                             AND rx_uid IN(\
                                 SELECT distinct(rx_uid) from rooscrape.foodhoover_store.rx_ref\
-                                WHERE hoover_place_id IN UNNEST(@place_ids)\
+                                WHERE place_id IN UNNEST(@place_ids)\
                             )\
                             GROUP BY rx_uid, cx_postcode) results\
                         LEFT JOIN rooscrape.foodhoover_store.postcode_lookup pc on pc.postcode=results.cx_postcode\
                         LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = pc.postcode_sector\
                         LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = results.rx_uid\
-                        LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.hoover_place_id\
+                        LEFT JOIN rooscrape.foodhoover_store.places places on places.place_id = ref.place_id\
                         GROUP BY places.place_id, ref.vendor, sectors.sector) bysector\
                     LEFT JOIN rooscrape.foodhoover_store.sectors sectors on sectors.sector = bysector.sector\
                     RIGHT JOIN rooscrape.foodhoover_store.places places on places.place_id = bysector.place_id\
@@ -402,7 +519,7 @@ def get_restaurant_details(place_ids):
             )\
         ) as entities\
         FROM places\
-        LEFT JOIN rx_ref on places.place_id=rx_ref.hoover_place_id\
+        LEFT JOIN rx_ref on places.place_id=rx_ref.place_id\
         WHERE places.place_id IN :place_ids\
         GROUP by places.place_id\
     ")
@@ -431,16 +548,17 @@ def get_restaurant_details(place_ids):
 
 def get_chains_boundary(chain, start, end, last_update):
 
-    bq_sql = "\
+    old_bq_sql = "\
+            DECLARE rx_uids ARRAY <STRING>;\
+            SET rx_uids = (SELECT ARRAY_AGG(distinct(ref.rx_uid) LIMIT 10000) FROM rooscrape.foodhoover_store.places\
+                    LEFT join rooscrape.foodhoover_store.rx_ref ref on ref.place_id = places.place_id\
+                    WHERE UPPER(place_name) LIKE UPPER(@chain)\
+                    );\
             WITH raw as (\
             SELECT ref.vendor, look.postcode_sector, ARRAY_AGG(DISTINCT coverage.rx_uid) as rx_included FROM (\
-                SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_fast\
-                WHERE DATE_TRUNC(scrape_time,DAY)>=@start AND DATE_TRUNC(scrape_time,DAY)<=@end\
-                AND rx_uid IN(\
-                    SELECT distinct(ref.rx_uid) from rooscrape.foodhoover_store.places\
-                    LEFT join rooscrape.foodhoover_store.rx_ref ref on ref.hoover_place_id = places.place_id\
-                    WHERE UPPER(place_name) LIKE UPPER(@chain)\
-                    )\
+                SELECT rx_uid, cx_postcode FROM rooscrape.foodhoover_store.rx_cx_scrape\
+                WHERE DATE(scrape_time)>=@start AND DATE(scrape_time)<=@end\
+                AND rx_uid IN UNNEST(rx_uids)\
                 GROUP BY rx_uid, cx_postcode) coverage\
             LEFT JOIN rooscrape.foodhoover_store.postcode_lookup as look on look.postcode=coverage.cx_postcode\
             LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid = coverage.rx_uid\
@@ -460,6 +578,79 @@ def get_chains_boundary(chain, start, end, last_update):
             GROUP BY raw.vendor\
         "
 
+    bq_sql = """
+            DECLARE place_ids ARRAY<STRING>;
+            SET place_ids = (SELECT ARRAY_AGG(distinct(place_id) LIMIT 10000) FROM rooscrape.foodhoover_store.places
+                    WHERE UPPER(place_name) LIKE UPPER(@chain)
+                    );
+            WITH 
+                raw as (
+                    SELECT vendor, sector_seen, ARRAY_AGG(DISTINCT rx_uid) as rx_included
+                    FROM rooscrape.foodhoover_store.rx_cx_sector, UNNEST(sectors_seen) as sector_seen
+                    WHERE scrape_date>=@start AND scrape_date<=@end  
+                    AND place_id IN UNNEST(place_ids)
+                    GROUP BY vendor, sector_seen
+                    ),
+                distinct_zones as (
+                    SELECT 
+                        vendor,
+                        ARRAY_AGG(DISTINCT area_covered IGNORE NULLS) as areas,
+                        ARRAY_AGG(DISTINCT (CASE WHEN area_covered is NULL THEN district_covered ELSE NULL END) IGNORE NULLS) as districts,
+                        ARRAY_AGG(DISTINCT (CASE WHEN district_covered is NULL THEN sector_seen ELSE NULL END) IGNORE NULLS) as sectors,
+                        SUM(delivery_population) as delivery_population,
+                        ARRAY_CONCAT_AGG(rx_included) as rx_included
+                    FROM (
+                        SELECT 
+                            vendor,
+                            postcode_sector,
+                            CASE WHEN
+                                SAFE_DIVIDE(
+                                    SUM(CASE WHEN sector_seen is not null then sector_area else 0 END) OVER(pc_area) ,sum(sector_area) OVER(pc_area) )>=0.9
+                            THEN postcode_area
+                            ELSE null
+                            END as area_covered,
+                            CASE WHEN
+                                SAFE_DIVIDE(
+                                    SUM(CASE WHEN sector_seen is not null then sector_area else 0 END) OVER(pc_district) ,sum(sector_area) OVER(pc_district) )>=0.9
+                            THEN postcode_district
+                            ELSE null
+                            END as district_covered,
+                            sector_seen, 
+                            CASE WHEN sector_seen is not null then sector_population else 0 END as delivery_population,
+                            rx_included as rx_included
+                        FROM (
+                            SELECT * FROM rooscrape.foodhoover_store.geo_mappings 
+                            CROSS JOIN UNNEST(['JE','FH','UE','ROO']) as vendor_list
+                            LEFT JOIN raw ON raw.sector_seen=geo_mappings.postcode_sector and raw.vendor=vendor_list)
+                        WINDOW 
+                            pc_area AS (PARTITION BY vendor_list, postcode_area),
+                            pc_district AS (PARTITION BY vendor_list, postcode_district)
+                    )
+                    GROUP BY vendor)
+            SELECT 
+                w.vendor, 
+                ST_ASGEOJSON(ST_UNION(ST_DUMP(ST_SIMPLIFY(ST_UNION_AGG(geometry), 200),2))) as delivery_area,
+                MAX(delivery_population) as delivery_population,
+                MAX(rx_included) as rx_num
+            FROM(
+                SELECT vendor,geometry FROM distinct_zones, UNNEST(areas) as areas_seen
+                INNER JOIN rooscrape.foodhoover_store.areas on areas.area=areas_seen
+                UNION ALL
+                SELECT vendor,geometry FROM distinct_zones, UNNEST(districts) as districts_seen
+                INNER JOIN rooscrape.foodhoover_store.districts on districts.district=districts_seen
+                UNION ALL
+                SELECT vendor, geometry FROM distinct_zones, UNNEST(sectors) as sectors_seen
+                INNER JOIN rooscrape.foodhoover_store.sectors on sectors.sector=sectors_seen
+                ) w
+            LEFT JOIN (
+                SELECT vendor, MAX(delivery_population) as delivery_population, COUNT(DISTINCT rx_list) as rx_included
+                FROM distinct_zones, UNNEST(rx_included) as rx_list
+                GROUP BY vendor)
+                u ON w.vendor=u.vendor 
+            WHERE w.vendor is NOT NULL
+            GROUP BY vendor
+    """
+
     sql = text("\
         SELECT\
             pop_stats.vendor,\
@@ -474,7 +665,7 @@ def get_chains_boundary(chain, start, end, last_update):
                     SELECT\
                         vendor,\
                         UNNEST(sectors_covered) as inc_sector\
-                    FROM agg_rx_cx\
+                    FROM agg_delivery_zone\
                     where UPPER(place_name) LIKE UPPER(:chain)\
                     GROUP BY vendor, UNNEST(sectors_covered)\
                     ) sectors_covered\
@@ -552,7 +743,7 @@ def get_places_in_area(chain, lngw, lats, lnge, latn):
     return  [{'place_id': r['place_id'],'place_name': r['place_name'],'place_lat': r['place_lat'],'place_lng': r['place_lng'],'place_vendors': r['place_vendors']} for r in result]
 
 def get_last_update():
-    sql = "select min(scrape_time) as first_update, max(scrape_time) as last_update from agg_country_run_pop"
+    sql = "select min(scrape_date) as first_update, max(scrape_date) as last_update from agg_country_fulfillment_day"
     engine = get_sql_client('foodhoover_cache')
     conn = engine.connect()
     result = conn.execute(sql)

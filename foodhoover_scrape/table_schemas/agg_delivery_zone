@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS public.agg_delivery_zone
+(
+    place_id text COLLATE pg_catalog."default",    
+    vendor text COLLATE pg_catalog."default",
+    delivery_zone geometry,
+    delivery_population int,
+    place_name text COLLATE pg_catalog."default",
+    place_lat double precision,
+    place_lng double precision,
+    vendor_rx text[] COLLATE pg_catalog."default",
+    sectors_covered text[] COLLATE pg_catalog."default"
+);
+
+CREATE INDEX IF NOT EXISTS agg_delivery_zone_idx
+    ON public.agg_delivery_zone USING btree
+    (place_name COLLATE pg_catalog."default" text_pattern_ops ASC NULLS LAST)
+    INCLUDE(place_name)
+    TABLESPACE pg_default;

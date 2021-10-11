@@ -4,7 +4,7 @@ Project to extract and visualise public delivery coverage from the main UK food 
 https://foodhoover.patrickwyatt.org/
 
 ## Population coverage of aggregators
-What is the overall population coverage of each of the aggregators? How many restaurants do they have in a particular area? Zoom the map to see the data at postcode sector level (around 5000 people).  
+What is the overall number or restaurants and population coverage of each of the aggregators? How many restaurants do they have in a particular area? Zoom the map to see the data at postcode sector level (around 5000 people). You can also select whether to see only restaurants that deliver themselves, or only restaurants that use aggregators to deliver
 https://foodhoover.patrickwyatt.org/aggregator
 
 ![Alt text](/foodhoover_app/static/info/aggregator.png?raw=true "Aggregator view")
@@ -31,7 +31,6 @@ https://foodhoover.patrickwyatt.org/chain?chain=German+Doner+Kebab
 * Full imports for all sectors run daily at 6PM UK time
 * Often, the same restaurant will appear on multiple aggregators. It may also appear on the same aggregator under different names (i.e. if there are multiple brands operating from the same site). Foodhoover attempts to link together these entities, principally by associating them with a Google Places ID. This can occasionally go wrong!
 * Restaurant counts are, following the logic above, counts of unique sites, not aggregator listings (which is a slightly higher number)
-* JustEat's McDonald's restaurants do not appear in Foodhoover
 
 ## Technicalities and data
 
@@ -39,7 +38,7 @@ This project contains four modules
 1. **Loader:** 
 * Prepares the static data (postcode lookup and shape files)
 * Uploads this data to BigQuery
-2. **Func:**
+2. **Get:**
 * Cloud Function that scrapes data for a given postocde or lat-lng, and streams it to BigQuery
 3. **Scrape:**
 * Orchestrates the scrapes of vendor sites on a daily schedule by calling Func

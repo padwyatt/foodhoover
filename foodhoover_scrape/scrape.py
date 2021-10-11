@@ -2,6 +2,7 @@ from connections import get_bq_client, get_bq_storage
 import json
 import time
 import asyncio
+import gzip 
 from aiohttp import ClientSession
 from google.cloud import bigquery
 
@@ -24,7 +25,7 @@ def get_scrape_candidates(vendors_to_crawl, postcode=None):
             array_agg(latitude ORDER BY RAND() LIMIT 1)[offset(0)] as latitude,\
             array_agg(postcode_geohash ORDER BY RAND() LIMIT 1)[offset(0)] as postcode_geohash\
         FROM rooscrape.foodhoover_store.postcode_lookup\
-        WHERE latitude is not null and longitude is not null and postcode_geohash is not null and postcode_sector is not null and postcode_district is not null and postcode is not null and postcode_area is not null\
+        WHERE status <> 'terminated' and latitude is not null and longitude is not null and postcode_geohash is not null and postcode_sector is not null and postcode_district is not null and postcode is not null and postcode_area is not null\
         "+postcode_clause+"\
         GROUP BY postcode_sector\
         ORDER BY rand()\
@@ -58,6 +59,7 @@ def bq_run_scrape_new(fetch_datas, run_id, mode=None):
             vendor_string = '&vendors='.join(fetch_data['vendors'])
             #old_uri = "https://europe-west2-rooscrape.cloudfunctions.net/foodhoover?mode=availability&postcode={postcode}&postcode_area={postcode}&lat={lat}}&lng={lng}&geohash={geohash}&vendors={vendor_string}&run_id={run_id}".format(
             uri = "https://europe-west2-rooscrape.cloudfunctions.net/foodhoover_get?mode=scrape&postcode={postcode}&lat={lat}&lng={lng}&geohash={geohash}&vendors={vendor_string}&run_id={run_id}".format(
+            #uri = "http://192.168.1.207:8080/foodhoover_get?mode=scrape&postcode={postcode}&lat={lat}&lng={lng}&geohash={geohash}&vendors={vendor_string}&run_id={run_id}".format(
                 postcode=fetch_data['postcode'],
                 lat=fetch_data['lat'], 
                 lng=fetch_data['lng'], 
@@ -74,7 +76,8 @@ def bq_run_scrape_new(fetch_datas, run_id, mode=None):
             try:
                 async with session.get(uri) as response:
                     response = await response.read()
-                    results = json.loads(response.decode('utf8'))
+                    response = gzip.decompress(response).decode('utf8')
+                    results = json.loads(response)
                     return results
             except Exception as e:
                 results = {
@@ -104,23 +107,16 @@ def bq_run_scrape_new(fetch_datas, run_id, mode=None):
         job_config = bigquery.LoadJobConfig(
             schema=[
                 bigquery.SchemaField("scrape_time", bigquery.enums.SqlTypeNames.TIMESTAMP),
-                bigquery.SchemaField("vendor", bigquery.enums.SqlTypeNames.STRING),
-                bigquery.SchemaField("cx_postcode", bigquery.enums.SqlTypeNames.STRING),
-                bigquery.SchemaField("rx_postcode", bigquery.enums.SqlTypeNames.STRING),
-                bigquery.SchemaField("rx_lat", bigquery.enums.SqlTypeNames.FLOAT),
-                bigquery.SchemaField("rx_lng", bigquery.enums.SqlTypeNames.FLOAT),
-                bigquery.SchemaField("rx_name", bigquery.enums.SqlTypeNames.STRING),
-                bigquery.SchemaField("run_id", bigquery.enums.SqlTypeNames.STRING),
-                bigquery.SchemaField("rx_slug", bigquery.enums.SqlTypeNames.STRING),
-                bigquery.SchemaField("rx_menu", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("rx_uid", bigquery.enums.SqlTypeNames.STRING),
+                bigquery.SchemaField("cx_postcode", bigquery.enums.SqlTypeNames.STRING), 
                 bigquery.SchemaField("eta", bigquery.enums.SqlTypeNames.FLOAT),
                 bigquery.SchemaField("fee", bigquery.enums.SqlTypeNames.FLOAT),
-                bigquery.SchemaField("rx_meta", bigquery.enums.SqlTypeNames.STRING)
+                bigquery.SchemaField("vendor", bigquery.enums.SqlTypeNames.STRING)
                 ],
             write_disposition="WRITE_APPEND",
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
         )
-        job = client.load_table_from_json(open_set, "rooscrape.foodhoover_store.rx_cx_results_raw",job_config=job_config)
+        job = client.load_table_from_json(open_set, "rooscrape.foodhoover_store.rx_cx_scrape",job_config=job_config)
         job.result()
 
         #write the scrape_log
@@ -135,6 +131,7 @@ def bq_run_scrape_new(fetch_datas, run_id, mode=None):
                 bigquery.SchemaField("payload_size", bigquery.enums.SqlTypeNames.INTEGER),
                 ],
             write_disposition="WRITE_APPEND",
+            max_bad_records=10,
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
         )
         job = client.load_table_from_json(scrape_status, "rooscrape.foodhoover_store.scrape_event",job_config=job_config)
@@ -146,6 +143,9 @@ def bq_run_scrape_new(fetch_datas, run_id, mode=None):
     chunk_size = 800
     results_stored = 0
     fetch_data_chunks = [fetch_datas[x:x+chunk_size] for x in range(0, len(fetch_datas), chunk_size)]
+
+    rx_records = {} ##this is a dictionary of restaurant data that we accumulate
+
     for fetch_data in fetch_data_chunks:
         scrape_results = asyncio.run(url_batch(fetch_data, scrape_fetch_function, 30))
         open_set = []
@@ -156,11 +156,60 @@ def bq_run_scrape_new(fetch_datas, run_id, mode=None):
             for status in scrape_result['scrape_status']:
                 scrape_status.append(status)
             for rx in scrape_result['open_set']:
-                open_set.append(rx)
-            
+                rx_data = {
+                    'scrape_time':rx['scrape_time'],
+                    'rx_uid':rx['rx_uid'],
+                    'cx_postcode':rx['cx_postcode'],
+                    'eta' : rx['eta'],
+                    'fee' : rx['fee'],
+                    'vendor': rx['vendor']
+                }
+                open_set.append(rx_data)
+
+                if rx['vendor'] in ['FH','JE']:
+                    rx_records[rx['rx_uid']] = {
+                        'rx_uid': rx['rx_uid'],
+                        'scrape_time' : rx['scrape_time'],
+                        'rx_slug': rx['rx_slug'],
+                        'rx_id': rx['rx_id'],
+                        'vendor' : rx['vendor'],
+                        'rx_postcode' : rx['rx_postcode'],
+                        'rx_lat': rx['rx_lat'],
+                        'rx_lng' : rx['rx_lng'],
+                        'rx_name':rx['rx_name'],
+                        'rx_fulfillment_type': rx['fulfillment_type'],
+                        'rx_menu': rx['rx_menu'],
+                        'rx_sponsored': rx['is_sponsored']
+                    }
+
         yield json.dumps(results_stored)
 
         total_records += load_scrape(open_set, scrape_status)
+
+    #write the record set
+    rx_records = [rx_record for rx_record in rx_records.values()]
+    client = get_bq_client()
+    job_config = bigquery.LoadJobConfig(
+        schema=[
+            bigquery.SchemaField("rx_uid", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("scrape_time", bigquery.enums.SqlTypeNames.TIMESTAMP),
+            bigquery.SchemaField("rx_slug", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("rx_id", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("vendor", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("rx_postcode", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("rx_lat", bigquery.enums.SqlTypeNames.FLOAT),
+            bigquery.SchemaField("rx_lng", bigquery.enums.SqlTypeNames.FLOAT),
+            bigquery.SchemaField("rx_name", bigquery.enums.SqlTypeNames.STRING),   
+            bigquery.SchemaField("rx_fulfillment_type", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("rx_sponsored", bigquery.enums.SqlTypeNames.BOOLEAN),
+            bigquery.SchemaField("rx_menu", bigquery.enums.SqlTypeNames.STRING)
+            ],
+        write_disposition="WRITE_APPEND",
+        max_bad_records=10,
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+    )
+    job = client.load_table_from_json(rx_records, "rooscrape.foodhoover_store.je_fh_cache",job_config=job_config)
+    job.result()
 
     yield json.dumps(total_records)
 

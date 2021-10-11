@@ -9,6 +9,7 @@ __pycache__/
 /foodhoover_loader/secrets.json
 /foodhoover_loader/rooscrape-gbq.json
 /foodhoover_scrape/secrets.json
+/foodhoover_scrape/service.yaml
 /foodhoover_scrape/rooscrape-gbq.json
 
 /foodhoover_loader/boundaries/
@@ -18,3 +19,4 @@ __pycache__/
 /foodhoover.code-workspace
 
 /Analysis/
+

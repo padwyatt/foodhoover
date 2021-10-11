@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS public.agg_sector_day
+(
+    scrape_date date NOT NULL,
+    postcode_sector text COLLATE pg_catalog."default",
+    vendor text COLLATE pg_catalog."default",
+    rx_num integer
+);
+
+CREATE INDEX agg_sector_day_idx
+    ON public.agg_sector_day USING btree
+    (scrape_date ASC NULLS LAST)
+    TABLESPACE pg_default;

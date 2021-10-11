@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template
-from loader import load_postcodes, load_sectors, sector_manipulations, load_districts, district_manipulations, export_sectors,export_districts, export_postcodes
+from loader import load_postcodes, load_sectors, sector_manipulations, load_districts, load_areas, district_manipulations, area_manipulations, export_sectors,export_districts, export_postcodes, export_areas
 # If `entrypoint` is not defined in app.yaml, App Engine will look for an app
 # called `app` in `main.py`.
 app = Flask(__name__)
@@ -7,7 +7,8 @@ app = Flask(__name__)
 def loader(steps):
     results = []
     if steps == ['ALL']:
-        steps = ['LOAD-POSTCODES','LOAD-SECTORS','SECTOR-MANIPULATIONS','LOAD-DISTRICTS','DISTRICT-MANIPULATIONS','EXPORT-SECTORS','EXPORT-DISTRICTS','EXPORT-POSTCODES']
+        steps = ['LOAD-POSTCODES','LOAD-SECTORS','SECTOR-MANIPULATIONS','LOAD-DISTRICTS','DISTRICT-MANIPULATIONS','LOAD-AREAS','AREA-MANIPULATIONS','EXPORT-SECTORS','EXPORT-DISTRICTS','EXPORT-AREAS','EXPORT-POSTCODES']
+        steps = ['LOAD-SECTORS','SECTOR-MANIPULATIONS','LOAD-DISTRICTS','DISTRICT-MANIPULATIONS','LOAD-AREAS','AREA-MANIPULATIONS','EXPORT-SECTORS','EXPORT-DISTRICTS','EXPORT-AREAS']
     for step in steps:
         if step == 'LOAD-POSTCODES':
             result = load_postcodes()
@@ -25,8 +26,16 @@ def loader(steps):
             result = load_sectors()
             print(result)
             results.append(step+": "+str(result))
+        elif step == 'LOAD-AREAS':
+            result = load_areas()
+            print(result)
+            results.append(step+": "+str(result))
         elif step == 'SECTOR-MANIPULATIONS': 
             result = sector_manipulations()
+            print(result)
+            results.append(step+": "+str(result))
+        elif step == 'AREA-MANIPULATIONS': 
+            result = area_manipulations()
             print(result)
             results.append(step+": "+str(result))
         elif step == 'EXPORT-SECTORS': 
@@ -35,6 +44,10 @@ def loader(steps):
             results.append(step+": "+str(result))
         elif step == 'EXPORT-DISTRICTS': 
             result = export_districts()
+            print(result)
+            results.append(step+": "+str(result))
+        elif step == 'EXPORT-AREAS': 
+            result = export_areas()
             print(result)
             results.append(step+": "+str(result))
         elif step == 'EXPORT-POSTCODES': 

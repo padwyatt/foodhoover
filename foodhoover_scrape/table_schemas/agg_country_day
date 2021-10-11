@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS public.agg_country_day
+(
+    scrape_date date NOT NULL,
+    country text COLLATE pg_catalog."default",
+    vendor text COLLATE pg_catalog."default",
+    delivery_population integer,
+    rx_num integer
+);
+
+CREATE INDEX agg_country_day_idx
+    ON public.agg_country_day USING btree
+    (scrape_date ASC NULLS LAST)
+    TABLESPACE pg_default;

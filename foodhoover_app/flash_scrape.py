@@ -46,7 +46,7 @@ def prepare_flash_scrape(bounds, place_ids):
     fetch_datas = get_flash_candidates(sectors_to_crawl, vendors_to_crawl)
     postcodes_to_scrape = [fetch_data['postcode'] for fetch_data in fetch_datas]
 
-    return fetch_datas, postcodes_to_scrape, rx_uids
+    return {'status' : 'OK', 'fetch_datas': fetch_datas, 'postcodes_to_scrape': postcodes_to_scrape, 'rx_uids':rx_uids}
 
 def get_flash_candidates(sectors_to_crawl, vendors_to_crawl):
 
@@ -62,7 +62,7 @@ def get_flash_candidates(sectors_to_crawl, vendors_to_crawl):
             (array_agg(latitude ORDER BY RANDOM()))[1] as latitude,\
             (array_agg(postcode_geohash ORDER BY RANDOM()))[1] as postcode_geohash\
         FROM postcode_lookup\
-        WHERE latitude is not null and longitude is not null and postcode_geohash is not null and postcode_sector is not null and postcode_district is not null and postcode is not null and postcode_area is not null\
+        WHERE status<>'terminated' and latitude is not null and longitude is not null and postcode_geohash is not null and postcode_sector is not null and postcode_district is not null and postcode is not null and postcode_area is not null\
         AND postcode_sector IN :sectors\
         GROUP BY postcode_sector")
 

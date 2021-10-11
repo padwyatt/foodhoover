@@ -1,7 +1,5 @@
 dispatch:
   - url: "*/"
     service: default
-  - url: "*/scrape/*"
-    service: scrape
   - url: "*/loader/*"
     service: loader

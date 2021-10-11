@@ -1,8 +1,0 @@
-CREATE TABLE public.agg_country_run_pop
-(
-    run_id text COLLATE pg_catalog."default" NOT NULL,
-    scrape_time timestamp without time zone,
-    vendor text,
-    delivery_population integer,
-    rx_num integer
-);

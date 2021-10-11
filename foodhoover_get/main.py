@@ -3,6 +3,7 @@ import uuid
 import time
 from flask import jsonify
 import re
+import gzip
 
 import asyncio
 from aiohttp import ClientSession
@@ -12,6 +13,17 @@ async def get_je(data):
     postcode = data['postcode']
     api = 'https://uk.api.just-eat.io/restaurants/bypostcode/'
     url = api+postcode 
+
+    header = {
+        'Application-Version': '33.32.0',
+        'User-Agent': 'Just Eat/33.32.0 (1935) iOS 14.7.1/iPhone',
+        'Accept-Language': 'en-GB',
+        'Accept-Charset': 'utf-8',
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+    }
 
     def parse_je(response):
         open_set = []
@@ -23,22 +35,49 @@ async def get_je(data):
                         eta_min = restaurant['DeliveryEtaMinutes']['RangeLower']
                         eta_max = restaurant['DeliveryEtaMinutes']['RangeUpper']
                         eta = (int(eta_min)+int(eta_max))/2
-                        fee = restaurant['DeliveryCost']
-                    except:
+                    except Exception as e:
+                        print("Error - could not parse ETA" + str(e))
                         eta = None
+                    try:
+                        fee = restaurant['DeliveryCost']
+                    except Exception as e:
+                        print("Error - could not parse fee" + str(e))
                         fee = None
+                    try :
+                        is_sponsored = restaurant['IsSponsored']
+                    except Exception as e:
+                        print("Error - could not parse sponsored" + str(e))
+                        is_sponsored = None
+
+                    try: 
+                        bands = response['deliveryFees']['restaurants'][str(restaurant['Id'])]['bands']
+                        if bands in [
+                                [{"minimumAmount": 0,"fee": 249}, {"minimumAmount": 700,"fee": 99}],
+                                [{"minimumAmount": 0,"fee": 249}, {"minimumAmount": 700,"fee": 199}],
+                                [{"minimumAmount": 0,"fee": 350}, {"minimumAmount": 700,"fee": 99}]
+                            ]:
+                            fulfillment_type = 'vendor'
+                        else:
+                            fulfillment_type = 'restaurant'
+                    except Exception as e:
+                        print("Error - could not parse fulfillment type" + str(e))
+                        fulfillment_type = 'restaurant'
+
                     open_set.append({
+                        'rx_uid' : restaurant['UniqueName']+'-JE',
+                        'rx_slug':restaurant['UniqueName'], 
+                        'rx_id':str(restaurant['Id']),
                         'vendor':'JE',
                         'cx_postcode':postcode,
-                        'rx_name':restaurant['Name'],
                         'rx_postcode':restaurant['Address']['Postcode'].replace(" ", ""),
-                        'rx_menu':restaurant['Url'], 
-                        'rx_slug':restaurant['UniqueName'], 
                         'rx_lat':restaurant['Address']['Latitude'],
                         'rx_lng':restaurant['Address']['Longitude'],
+                        'rx_name':restaurant['Name'],
                         'eta': eta,
                         'fee':fee,
-                        'rx_meta':None
+                        'fulfillment_type': fulfillment_type,
+                        'is_sponsored':is_sponsored,
+                        'rx_menu':restaurant['Url'], 
                     })
             return open_set, 'OK'
         except Exception as e:
@@ -47,7 +86,7 @@ async def get_je(data):
 
     async with ClientSession() as session:
         try:
-            async with session.get(url) as response:
+            async with session.get(url, headers=header) as response:
                 response = await response.read()
                 response = json.loads(response.decode('utf8'))
                 payload_size = len(json.dumps(response))
@@ -111,28 +150,31 @@ async def get_ue(data):
                     eta_min =  re.search('(\d*)\–?(\d*)', restaurant['store']['meta2'][0]['text']).group(1) 
                     eta_max = re.search('(\d*)\–?(\d*)', restaurant['store']['meta2'][0]['text']).group(2) 
                     eta = (int(eta_min)+int(eta_max))/2
-                except Exception as e:
-                    print(e)      
+                except Exception as e:   
+                    print("Error - could not parse ETA" + str(e))  
                     eta = None        
                 try:     
                     fee = re.search('\d+\.?\d+', restaurant['store']['meta'][0]['text']).group(0) 
-                except Exception as e:
-                    print(e)      
+                except Exception as e:  
                     fee = None  
+                    print("Error - could not parse fee" + str(e))
 
                 if eta != None:
                     open_set.append({
+                        'rx_uid' : restaurant['uuid']+'-UE',
+                        'rx_slug':None, 
+                        'rx_id': restaurant['uuid'],
                         'vendor':'UE',
                         'cx_postcode':postcode,
-                        'rx_name':restaurant['store']['title']['text'],
                         'rx_postcode':None,
-                        'rx_menu':restaurant['store']['actionUrl'], 
-                        'rx_slug':restaurant['uuid'], 
                         'rx_lat':None,
                         'rx_lng':None,
+                        'rx_name':restaurant['store']['title']['text'],
                         'eta': eta,
                         'fee':fee,
-                        'rx_meta':None
+                        'fulfillment_type': None,
+                        'is_sponsored':None, ##to add
+                        'rx_menu':restaurant['store']['actionUrl'], 
                     })
             return open_set, 'OK'
         except Exception as e:
@@ -191,17 +233,20 @@ async def get_fh(data):
             for restaurant in restaurants_list:
                 if restaurant['takeaway_open_status']=='open':
                     open_set.append({
+                        'rx_uid' : str(restaurant['id'])+'-FH',
+                        'rx_slug':None, 
+                        'rx_id': str(restaurant['id']),
                         'vendor':'FH',
                         'cx_postcode':postcode,
-                        'rx_name':restaurant['name'],
                         'rx_postcode':restaurant['postcode'].replace(" ", ""),
-                        'rx_menu':None, 
-                        'rx_slug':str(restaurant['id']), 
                         'rx_lat':restaurant['lat'],
                         'rx_lng':restaurant['lng'],
+                        'rx_name':restaurant['name'],
                         'eta': restaurant['delivery_time'],
                         'fee':restaurant['delivery_charge'],
-                        'rx_meta':None
+                        'fulfillment_type': 'restaurant', ##hard coded assumption
+                        'is_sponsored':None, 
+                        'rx_menu':restaurant['url'], 
                     })
             return open_set, 'OK'
         except Exception as e:
@@ -260,29 +305,33 @@ async def get_roo(data):
                 rx_name = restaurant["target"]["restaurant"]["name"]
                 rx_id = restaurant["target"]["restaurant"]["id"]
                 rx_slug = re.search(r'.*\/(.*)\?', rx_link).group(1)
-
                 try:
                     description = restaurant["contentDescription"]
                     eta_min =  re.search('Delivers in (\d*)\ to ?(\d*) minutes',description).group(1) 
                     eta_max = re.search('Delivers in (\d*)\ to ?(\d*) minutes',description).group(2) 
                     eta = (int(eta_min)+int(eta_max))/2
-                except: 
+                except Exception as e: 
+                    print("Error - could not parse fee" + str(e))
                     eta = None
-
+                    
                 if 'time=ASAP' in rx_link:##detect preorder
                     open_set.append({
+                        'rx_uid' : str(rx_id)+'-ROO',
+                        'rx_slug':rx_slug, 
+                        'rx_id': str(rx_id),
                         'vendor':'ROO',
                         'cx_postcode':postcode,
-                        'rx_name':rx_name,
                         'rx_postcode':None,
-                        'rx_menu':rx_link, 
-                        'rx_slug':rx_slug, 
                         'rx_lat':None,
                         'rx_lng':None,
+                        'rx_name':rx_name,
                         'eta': eta,
                         'fee':None,
-                        'rx_meta' : rx_id
+                        'fulfillment_type': None,
+                        'is_sponsored':None, 
+                        'rx_menu':rx_link, 
                     })
+
             return open_set, 'OK'
         except Exception as e:
             print(e)
@@ -394,74 +443,131 @@ async def crawl_roo(rx_id):
 
     def parse_roo_details(response):
         try:
-            roo_rx = {
-                'scrape_time' : time.time(),
-                'rx_id' : response['id'],
-                'rx_name' : response['name'],
-                'rx_slug' : response['uname'],
-                'rx_neighbourhood' : response['neighborhood']['name'],
-                'rx_city' : response['city'],
-                'rx_lng' : response['coordinates'][0],
-                'rx_lat' : response['coordinates'][1],
-                'rx_prep_time' : response['curr_prep_time'],
-                'rx_address' : response['address']['address1'],
-                'rx_postcode' : response['address']['post_code'],
-                'rx_fulfillment_type' : response['fulfillment_type'],
-                'rx_menu_page' : response['share_url']
-            }
             final = {
                 'scrape_status' : 'OK',
-                'roo_details': roo_rx
+                'roo_details': {
+                    'scrape_time' : time.time(),
+                    'rx_id' : response['id'],
+                    'rx_name' : response['name'],
+                    'rx_slug' : response['uname'],
+                    'rx_neighbourhood' : response['neighborhood']['name'],
+                    'rx_city' : response['city'],
+                    'rx_lng' : response['coordinates'][0],
+                    'rx_lat' : response['coordinates'][1],
+                    'rx_prep_time' : response['curr_prep_time'],
+                    'rx_address' : response['address']['address1'],
+                    'rx_postcode' : response['address']['post_code'],
+                    'rx_fulfillment_type' : response['fulfillment_type'],
+                    'rx_menu_page' : response['share_url'],
+                    'rx_blob' : json.dumps(response)
+                }
             }
-
         except Exception as e:
             final = {
                 'scrape_status' : 'Parse Error: ' + str(e),
-                'roo_details': {}
+                'roo_details': {
+                    'scrape_time' : time.time(),
+                    'rx_id' :rx_id,
+                    'rx_name' : None,
+                    'rx_slug' : None,
+                    'rx_neighbourhood' : None,
+                    'rx_city' : None,
+                    'rx_lng' : None,
+                    'rx_lat' : None,
+                    'rx_prep_time' : None,
+                    'rx_address' : None,
+                    'rx_postcode' : None,
+                    'rx_fulfillment_type' : None,
+                    'rx_menu_page' : None,
+                    'rx_blob' : json.dumps(response)
+                }
             }
-
         return final
 
-    url = 'https://api.uk.deliveroo.com/orderapp/v1/restaurants/'+rx_id
+    url = 'https://api.uk.deliveroo.com/orderapp/v1/restaurants/'+rx_id+'?include_unavailable=true&fulfillment_method=DELIVERY&restaurant_fulfillments_supported=true'
     async with ClientSession() as session:
         try:
             async with session.get(url) as response:
                 response = await response.json()
                 return parse_roo_details(response)
         except Exception as e:
-                return {}, 'Fetch Error: ' +str(e)
+            final = {
+                'scrape_status' : 'Fetch Error: ' + str(e),
+                'roo_details': {
+                    'scrape_time' : time.time(),
+                    'rx_id' :rx_id,
+                    'rx_name' : None,
+                    'rx_slug' : None,
+                    'rx_neighbourhood' : None,
+                    'rx_city' : None,
+                    'rx_lng' : None,
+                    'rx_lat' : None,
+                    'rx_prep_time' : None,
+                    'rx_address' : None,
+                    'rx_postcode' : None,
+                    'rx_fulfillment_type' : None,
+                    'rx_menu_page' : None,
+                    'rx_blob' : None
+                }
+            }
+            return final
+
 
 async def crawl_ue(rx_id):
 
     def parse_ue_details(response):
         try:
-            ue_rx = {
-                'scrape_time' : time.time(),
-                'rx_id' : response['uuid'],
-                'rx_name' : response['title'],
-                'rx_slug' : response['slug'],
-                'rx_neighbourhood' : response['location']['geo']['neighborhood'],
-                'rx_city' : response['location']['geo']['city'],
-                'rx_lng' : response['location']['longitude'],
-                'rx_lat' : response['location']['latitude'],
-                'rx_prep_time' : None,
-                'rx_address' : response['location']['streetAddress'],
-                'rx_postcode' : None,
-                'rx_fulfillment_type' : str(response['isDeliveryThirdParty']),
-                'rx_menu_page' : None,
-                'rx_blob' : json.dumps(response)
-            }
+            ue_data = response['data']
+
+            try:
+                rx_neighbourhood = ue_data['location']['geo']['neighborhood']
+            except:
+                rx_neighbourhood = None
+
+            try:
+                rx_city = ue_data['location']['geo']['city']
+            except:
+                rx_city = None
+
             final = {
                 'scrape_status' : 'OK',
-                'ue_details': ue_rx
-            }
-
+                'ue_details': {
+                    'scrape_time' : time.time(),
+                    'rx_id' : ue_data['uuid'],
+                    'rx_name' : ue_data['title'],
+                    'rx_slug' : ue_data['slug'],
+                    'rx_neighbourhood' : rx_neighbourhood,
+                    'rx_city' : rx_city,
+                    'rx_lng' : ue_data['location']['longitude'],
+                    'rx_lat' : ue_data['location']['latitude'],
+                    'rx_prep_time' : None,
+                    'rx_address' : ue_data['location']['streetAddress'],
+                    'rx_postcode' : None,
+                    'rx_fulfillment_type' : 'restaurant' if ue_data['isDeliveryThirdParty'] else 'vendor',
+                    'rx_menu_page' : None,
+                    'rx_blob' : json.dumps(ue_data)
+                    }
+            } 
         except Exception as e:
             final = {
                 'scrape_status' : 'Parse Error: ' + str(e),
-                'ue_details': {}
+                'ue_details': {
+                    'scrape_time' : time.time(),
+                    'rx_id' : rx_id,
+                    'rx_name' : None,
+                    'rx_slug' : None,
+                    'rx_neighbourhood' : None,
+                    'rx_city' : None,
+                    'rx_lng' : None,
+                    'rx_lat' : None,
+                    'rx_prep_time' : None,
+                    'rx_address' : None,
+                    'rx_postcode' : None,
+                    'rx_fulfillment_type' : None,
+                    'rx_menu_page' : None,
+                    'rx_blob' : json.dumps(response)
+                }
             }
-
         return final
     
     lat = 51
@@ -494,9 +600,28 @@ async def crawl_ue(rx_id):
         try:
             async with session.post(url=url,data=data, headers=header) as response:
                 response = await response.json()
-                return parse_ue_details(response['data'])
+                return parse_ue_details(response)
         except Exception as e:
-                return {}, 'Fetch Error: ' +str(e)
+                final = {
+                    'scrape_status' : 'Fetch Error: ' + str(e),
+                    'ue_details': {
+                        'scrape_time' : time.time(),
+                        'rx_id' : rx_id,
+                        'rx_name' : None,
+                        'rx_slug' : None,
+                        'rx_neighbourhood' : None,
+                        'rx_city' : None,
+                        'rx_lng' : None,
+                        'rx_lat' : None,
+                        'rx_prep_time' : None,
+                        'rx_address' : None,
+                        'rx_postcode' : None,
+                        'rx_fulfillment_type' : None,
+                        'rx_menu_page' : None,
+                        'rx_blob' : None
+                    }
+                }
+                return final
 
 def foodhoover_get(request):
 
@@ -551,13 +676,14 @@ def foodhoover_get(request):
                 rx['run_id'] = run_id
                 open_set.append(rx)
 
+        final = {
+            'scrape_status' : scrape_status,
+            'open_set': open_set
+        }
 
-            final = {
-                'scrape_status' : scrape_status,
-                'open_set': open_set
-            }
-
-        return jsonify(final)
+        final = json.dumps(final).encode('utf8')
+        
+        return gzip.compress(final)
 
     elif request.args.get('mode')=='roo':
 

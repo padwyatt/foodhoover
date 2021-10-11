@@ -82,7 +82,9 @@ def load_sectors():
     sectors_df['geometry'] = np.nan
     sectors_df['sector_centre'] = np.nan
     sectors_df['closest_postcode'] = np.nan
-
+    sectors_df['population'] = np.nan
+    sectors_df['sector_area'] = np.nan
+    
     ###write table to big query
     client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
     table_id = "rooscrape.foodhoover_store.sectors"
@@ -93,7 +95,9 @@ def load_sectors():
             bigquery.SchemaField("geometry", bigquery.enums.SqlTypeNames.GEOGRAPHY),
             bigquery.SchemaField("sector_centre", bigquery.enums.SqlTypeNames.GEOGRAPHY),
             bigquery.SchemaField("closest_postcode", bigquery.enums.SqlTypeNames.STRING),
-            bigquery.SchemaField("json_geometry", bigquery.enums.SqlTypeNames.STRING)
+            bigquery.SchemaField("json_geometry", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("population", bigquery.enums.SqlTypeNames.INTEGER),
+            bigquery.SchemaField("sector_area", bigquery.enums.SqlTypeNames.FLOAT)
             ],
         write_disposition="WRITE_TRUNCATE",
     )
@@ -121,8 +125,8 @@ def sector_manipulations():
     job = client.query(sql)
     job.result()
 
-    ###update the add a centre point to each sector
-    sql = "UPDATE "+table_id+ " SET sector_centre = ST_CENTROID(geometry) where geometry is not null"
+    ###update the add a centre point and area to each sector
+    sql = "UPDATE "+table_id+ " SET sector_centre = ST_CENTROID(geometry), sector_area=ST_AREA(geometry) where geometry is not null"
     job = client.query(sql)
     job.result()
 
@@ -172,7 +176,9 @@ def load_districts():
     districts_df.columns = ['district','json_geometry']
     districts_df['geometry'] = np.nan
     districts_df['district_centre'] = np.nan 
-
+    districts_df['population'] = np.nan 
+    districts_df['district_area'] = np.nan 
+    
     ###write table to big query
     client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
     table_id = "rooscrape.foodhoover_store.districts"
@@ -182,7 +188,9 @@ def load_districts():
             bigquery.SchemaField("district", bigquery.enums.SqlTypeNames.STRING),
             bigquery.SchemaField("geometry", bigquery.enums.SqlTypeNames.GEOGRAPHY),
             bigquery.SchemaField("json_geometry", bigquery.enums.SqlTypeNames.STRING),
-            bigquery.SchemaField("district_centre", bigquery.enums.SqlTypeNames.GEOGRAPHY)
+            bigquery.SchemaField("district_centre", bigquery.enums.SqlTypeNames.GEOGRAPHY),
+            bigquery.SchemaField("population", bigquery.enums.SqlTypeNames.INTEGER),
+            bigquery.SchemaField("district_area", bigquery.enums.SqlTypeNames.FLOAT)
             ],
         write_disposition="WRITE_TRUNCATE",
     )
@@ -210,8 +218,8 @@ def district_manipulations():
     job = client.query(sql)
     job.result()
 
-    ###update the add a centre point to each sector
-    sql = "UPDATE "+table_id+ " SET district_centre = ST_CENTROID(geometry) where geometry is not null "
+    ###update the add a centre point and area to each sector
+    sql = "UPDATE "+table_id+ " SET district_centre = ST_CENTROID(geometry), district_area=ST_AREA(geometry) where geometry is not null "
     job = client.query(sql)
     job.result()
 
@@ -228,6 +236,81 @@ def district_manipulations():
     job.result()
 
     return "Done district manipulations"
+
+def load_areas():
+
+    fp = "boundaries/Areas.shp"
+    areas_df = gpd.read_file(fp)
+
+    ###adapt to lat/lng and convert to geojson
+    areas_df['json_geometry'] = areas_df['geometry'].to_crs(epsg=4326)
+    areas_df['json_geometry'] = areas_df['json_geometry'].apply(lambda x: geojson.dumps(x))
+
+    ###add dummy columns we will use later
+    areas_df = areas_df[['name','json_geometry']]
+    areas_df.columns = ['area','json_geometry']
+    areas_df['geometry'] = np.nan
+    areas_df['area_centre'] = np.nan 
+    areas_df['population'] = np.nan 
+    areas_df['area_area'] = np.nan
+
+    ###write table to big query
+    client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
+    table_id = "rooscrape.foodhoover_store.areas"
+
+    job_config = bigquery.LoadJobConfig(
+        schema=[
+            bigquery.SchemaField("area", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("geometry", bigquery.enums.SqlTypeNames.GEOGRAPHY),
+            bigquery.SchemaField("json_geometry", bigquery.enums.SqlTypeNames.STRING),
+            bigquery.SchemaField("area_centre", bigquery.enums.SqlTypeNames.GEOGRAPHY),
+            bigquery.SchemaField("population", bigquery.enums.SqlTypeNames.INTEGER),
+            bigquery.SchemaField("area_area", bigquery.enums.SqlTypeNames.FLOAT)
+            ],
+        write_disposition="WRITE_TRUNCATE",
+    )
+
+    job = client.load_table_from_dataframe(
+        areas_df, table_id, job_config=job_config
+    )
+    job.result()
+
+    table = client.get_table(table_id)  # Make an API request.
+
+    return (
+        "Loaded {} rows and {} columns to {}".format(
+            table.num_rows, len(table.schema), table_id
+        )
+    )
+
+def area_manipulations():
+
+    client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
+    table_id = "rooscrape.foodhoover_store.areas"
+    
+    ###update the geometry column
+    sql = "UPDATE "+table_id+ " SET geometry= ST_SIMPLIFY(IFNULL(SAFE.ST_GEOGFROMGEOJSON(json_geometry),ST_GEOGFROMGEOJSON(json_geometry, make_valid => TRUE)),100) where json_geometry is not null"
+    job = client.query(sql)
+    job.result()
+
+    ###update the add a centre point and area to each sector
+    sql = "UPDATE "+table_id+ " SET area_centre = ST_CENTROID(geometry), area_area=ST_AREA(geometry) where geometry is not null "
+    job = client.query(sql)
+    job.result()
+
+    ###add the population to each area
+    sql = "UPDATE `rooscrape.foodhoover_store.areas` a \
+        SET a.population = CAST(b.population as INT64) \
+        FROM \
+            (SELECT postcode_area, sum(Total_Persons) as population from  \
+            `rooscrape.foodhoover_store.postcode_lookup` \
+            GROUP BY postcode_area) b \
+        WHERE a.area = b.postcode_area\
+    "
+    job = client.query(sql)
+    job.result()
+
+    return "Done area manipulations"
 
 def bq_to_gcs(sql, gcs_filename):
     client = bigquery.Client.from_service_account_json('rooscrape-gbq.json')
@@ -282,7 +365,7 @@ def import_sql(file_path, columns, table_name, write_mode):
         conn.close()
     
     project = 'rooscrape'
-    instance = 'foodhoover-db'
+    instance = 'foodhoover-web'
 
     instances_import_request_body = {
         "importContext": {
@@ -313,21 +396,31 @@ def import_sql(file_path, columns, table_name, write_mode):
 
 def export_sectors():
     try:
-        sql = "SELECT sector,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(sector_centre)) as sector_centre, closest_postcode, population FROM foodhoover_store.sectors"
+        sql = "SELECT sector,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(sector_centre)) as sector_centre, closest_postcode, population, sector_area FROM foodhoover_store.sectors"
         gcs_filename = 'sectors.gzip'
         file_path =  bq_to_gcs(sql, gcs_filename)
-        status = import_sql(file_path, ['sector','geometry','sector_centre','closest_postcode','population'], "sectors",'overwrite')
+        status = import_sql(file_path, ['sector','geometry','sector_centre','closest_postcode','population','sector_area'], "sectors",'overwrite')
         return "Sectors exported"
     except Exception as e:
         return e
 
 def export_districts():
     try:
-        sql = "SELECT district,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(district_centre)) as district_centre, population FROM foodhoover_store.districts"
+        sql = "SELECT district,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(district_centre)) as district_centre, population, district_area FROM foodhoover_store.districts"
         gcs_filename = 'districts.gzip'
         file_path =  bq_to_gcs(sql, gcs_filename)
-        status = import_sql(file_path, ['district','geometry','district_centre','population'], "districts",'overwrite')
+        status = import_sql(file_path, ['district','geometry','district_centre','population', 'district_area'], "districts",'overwrite')
         return "Districts exported"
+    except Exception as e:
+        return e
+
+def export_areas():
+    try:
+        sql = "SELECT area,  TO_HEX(ST_ASBINARY(geometry)) as geometry, TO_HEX(ST_ASBINARY(area_centre)) as area_centre, population, area_area FROM foodhoover_store.areas"
+        gcs_filename = 'areas.gzip'
+        file_path =  bq_to_gcs(sql, gcs_filename)
+        status = import_sql(file_path, ['area','geometry','area_centre','population','area_area'], "areas",'overwrite')
+        return "Areas exported"
     except Exception as e:
         return e
 

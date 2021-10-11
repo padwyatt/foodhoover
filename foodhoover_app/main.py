@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from datetime import timedelta
-from get_data import get_country_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_last_update, get_chains_boundary, get_places_in_area
+from get_data import get_country_data, get_country_fulfillment_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_last_update, get_chains_boundary, get_places_in_area
 import json
 import uuid
 
@@ -11,28 +11,40 @@ config = { 'extensions': ['.js', '.css', '.csv'], 'hash_size': 5 }
 cache_buster = CacheBuster(config=config)
 cache_buster.init_app(app)
 
-f = open('secrets.json')
-secrets = json.load(f)
-map_secret = secrets['map_key']
+def init():
+    f = open('secrets.json')
+    secrets = json.load(f)
+    map_secret = secrets['map_key']
 
-first_update, last_update = get_last_update()
-start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
-end = last_update.strftime('%Y-%m-%d')
-print(end)
+    first_update, last_update = get_last_update()
+    start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
+    end = last_update.strftime('%Y-%m-%d')
+    return start, end, first_update, last_update, map_secret
 
 @app.route('/aggregator')
 @app.route('/')
-@app.errorhandler(404)
-def country_view(start=start,end=end):
+#@app.errorhandler(404)
+def country_view():
+    start, end, first_update, last_update, map_secret = init()
     if 'start' in request.args:
         start = request.args.get('start')
     if 'end' in request.args:
         end = request.args.get('end')
+    if 'delivery' in request.args:
+        delivery = request.args.get('delivery')
+    else:
+        delivery='all'
+    if 'vendor' in request.args:
+        vendor = request.args.get('vendor')
+    else:
+        vendor ='ROO'
+
     tab_name = 'country'
-    return render_template('index.html', place_details=None, chain=None, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
+    return render_template('index.html', place_details=None, chain=None, tab_name = tab_name, start=start, end=end, delivery=delivery, vendor=vendor, map_secret=map_secret, first_update=first_update, last_update=last_update)
 
 @app.route('/restaurant')
-def restaurant_view(start=start, end=end):
+def restaurant_view():
+    start, end, first_update, last_update, map_secret = init()
     if 'start' in request.args:
         start = request.args.get('start')
     if 'end' in request.args:
@@ -43,7 +55,8 @@ def restaurant_view(start=start, end=end):
     return render_template('index.html', place_details=place_details, chain=None, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
 
 @app.route('/chain')
-def chain_view(start=start, end=end):
+def chain_view():
+    start, end, first_update, last_update, map_secret = init()
     if 'start' in request.args:
         start = request.args.get('start')
     if 'end' in request.args:
@@ -62,10 +75,11 @@ def country_data():
     lnge = request.args.get('lnge')
     latn = request.args.get('latn')
     granularity = request.args.get('granularity')
-    return jsonify(get_country_data(start, end, lngw, lats, lnge, latn, granularity))
+    return jsonify(get_country_fulfillment_data(start, end, lngw, lats, lnge, latn, granularity))
 
 @app.route('/deliveryboundary.json')
 def delivery_boundary():
+    first_update, last_update = get_last_update()
     start = request.args.get('start')
     end = request.args.get('end')
     place_ids = request.args.getlist('place_id')
@@ -95,6 +109,7 @@ def geo_objects():
 
 @app.route('/chainsboundary.json')
 def chains_boundary():
+    first_update, last_update = get_last_update()
     chain= request.args.get('chain')
     start = request.args.get('start')
     end = request.args.get('end')
@@ -109,7 +124,6 @@ def autocomplete():
     return jsonify(matching_results=results)
 
 @app.route('/flash', methods=['POST'])
-
 def flash_get():
     from flash_scrape import to_sync_generator, flash_url_batch, scrape_fetch_function, prepare_flash_scrape
 
@@ -117,10 +131,13 @@ def flash_get():
     run_id = str(uuid.uuid4())
     bounds = params['bounds']  
     place_ids = params['place_ids']
-    fetch_datas, postcodes_to_scrape, rx_uids = prepare_flash_scrape(bounds, place_ids)
+    flash_prep = prepare_flash_scrape(bounds, place_ids)
 
-    return app.response_class(to_sync_generator(flash_url_batch(fetch_datas, rx_uids, scrape_fetch_function, 30, postcodes_to_scrape, run_id)), mimetype='text/event-stream')
-
+    if flash_prep['status'] == 'OK':
+        return app.response_class(to_sync_generator(flash_url_batch(flash_prep['fetch_datas'], flash_prep['rx_uids'], scrape_fetch_function, 30, flash_prep['postcodes_to_scrape'], run_id)), mimetype='text/event-stream')
+    else:
+        return flash_prep
+    
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080, debug=True)
 

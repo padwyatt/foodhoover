@@ -1110,7 +1110,11 @@ function countryMap(start, end, map){
       coverage_layer.addGeoJson(json['coverage']);
       coverage_bounds =  map.getBounds()
 
-      colourMap(coverage_layer, default_vendor)
+      vendor = getUrlVars('vendor')[0]
+      if (vendor == null) {
+        vendor=default_vendor
+      }
+      colourMap(coverage_layer, vendor)
 
       //add the vendor selector
       country_controller(map, json['stats'])
@@ -1125,9 +1129,45 @@ function countryMap(start, end, map){
     return map
   }
 
-  function colourMap(coverage_layer, vendor_name){    
+  function toggleDelivery(toggledElement){
+
+    delivery_restaurant = document.getElementById('delivery_choice_restaurant');
+    delivery_vendor = document.getElementById('delivery_choice_vendor');
+
+    if (delivery_restaurant.checked == false & delivery_vendor.checked == false){
+      if (toggledElement=='delivery_choice_restaurant'){
+        delivery_vendor.checked=true
+      }
+      else if (toggledElement=='delivery_choice_vendor'){
+        delivery_restaurant.checked=true
+      }
+    }
+
+    if (delivery_restaurant.checked == true & delivery_vendor.checked == true){
+      fulfillment_type = 'all'
+    }
+    else if (delivery_restaurant.checked == true & delivery_vendor.checked == false){
+      fulfillment_type = 'restaurant'
+    }
+    else if (delivery_restaurant.checked == false & delivery_vendor.checked == true){
+      fulfillment_type = 'vendor'
+    }
+    
+    updateParams('delivery', fulfillment_type, 'replace')
+    colourMap(coverage_layer, selected_vendor)
+  }
+
+  function colourMap(coverage_layer, vendor_name){  
     coverage_layer.setStyle(function(feature) {
-      color = gethex(feature.getProperty(vendor_name),min_rx, max_rx)
+      feature_stats = feature.getProperty('rx_counts')
+      rx_count_vendor = 0
+      if (fulfillment_type in feature_stats){
+        if (vendor_name in feature_stats[fulfillment_type]){
+          rx_count_vendor = feature_stats[fulfillment_type][vendor_name]
+        }
+      }
+
+      color = gethex(rx_count_vendor,min_rx, max_rx)
       return /** @type {!google.maps.Data.StyleOptions} */({
         fillColor: color,
         strokeColor: color,
@@ -1161,6 +1201,7 @@ function countryMap(start, end, map){
   function country_controller(map, stats){
 
     function LayerControl(controlDiv, stats) {
+      controlDiv.innerHTML = '';
       layersDataTable = document.createElement("table");
       layersDataTable.classList.add('GeoPopCoverage')
       layersDataRow = document.createElement("tr");
@@ -1175,6 +1216,11 @@ function countryMap(start, end, map){
       layersDataRow.appendChild(layersDataCell)
       layersDataTable.appendChild(layersDataRow)
 
+      selected_vendor = getUrlVars('vendor')[0]
+      if (selected_vendor == null) {
+        selected_vendor=default_vendor
+      }
+
       for (var vendor in stats){
         layersDataRow = document.createElement("tr");
         layersDataCell = document.createElement("td");
@@ -1182,7 +1228,7 @@ function countryMap(start, end, map){
         const controlUI = document.createElement("input");
         controlUI.type="radio";
         controlUI.name="vendor_choice"
-        controlUI.checked=(default_vendor==vendor);
+        controlUI.checked=(selected_vendor==vendor);
         controlUI.id=vendor;
         controlUI.zoom = 3.5;
         layersDataCell.appendChild(controlUI);
@@ -1200,20 +1246,57 @@ function countryMap(start, end, map){
 
         layersDataCell = document.createElement("td");
         labelDataCell = document.createElement("label");
-        labelDataCell.innerHTML = stats[vendor]['rx_num'].toLocaleString()
+        labelDataCell.innerHTML = stats[vendor][fulfillment_type]['rx_num'].toLocaleString()
         layersDataCell.appendChild(labelDataCell)
         layersDataRow.appendChild(layersDataCell)
         layersDataCell = document.createElement("td");
         labelDataCell = document.createElement("label");
-        labelDataCell.innerHTML = stats[vendor]['delivery_population'].toLocaleString()
+        labelDataCell.innerHTML = stats[vendor][fulfillment_type]['delivery_population'].toLocaleString()
         layersDataCell.appendChild(labelDataCell)
         layersDataRow.appendChild(layersDataCell)
         // Setup the click event listener
         controlUI.addEventListener("click", function(e) {
+          updateParams('vendor', controlUI.id, 'replace')
+          selected_vendor = controlUI.id
           colourMap(coverage_layer, controlUI.id)
         });
         layersDataTable.appendChild(layersDataRow)
       }
+
+      controlDiv.appendChild(layersDataTable)
+
+      const hrule = document.createElement("hr");
+      hrule.style.margin = 10;
+      controlDiv.appendChild(hrule)
+
+      layersDataTable = document.createElement("table");
+      layersDataTable.classList.add('GeoPopCoverage')
+      layersDataRow = document.createElement("tr");
+
+      delivery_options = {'restaurant':'Restaurant','vendor':'Aggregator'}
+      for (const [delivery, delivery_label] of Object.entries(delivery_options)){
+        layersDataCell = document.createElement("td");
+        const deliverytypeUI = document.createElement("input");
+        deliverytypeUI.type="checkbox";
+        deliverytypeUI.name="delivery_choice_"+delivery
+        deliverytypeUI.checked=(fulfillment_type==delivery || fulfillment_type=='all');
+        deliverytypeUI.id="delivery_choice_"+delivery;
+        labelUI = document.createElement("label");
+        labelUI.for='vendor';
+        labelUI.innerHTML=delivery_label+'<br>delivered';
+        labelUI.style.verticalAlign = 'middle';
+        labelUI.style.textAlign = 'left';
+        labelUI.style.marginLeft = 10;
+        layersDataCell.appendChild(deliverytypeUI);
+        layersDataCell.appendChild(labelUI);
+        layersDataRow.appendChild(layersDataCell);
+        deliverytypeUI.addEventListener("click", function(e) {
+          toggleDelivery(deliverytypeUI.id);
+          LayerControl(controlDiv, stats)
+        });
+      }
+      layersDataTable.appendChild(layersDataRow);
+
       controlDiv.appendChild(layersDataTable)
     }
   
@@ -1250,14 +1333,21 @@ function countryMap(start, end, map){
     table_row.appendChild(table_cell)
     table.appendChild(table_row)
     
+    feature_stats = event.feature.getProperty('rx_counts')
+    vendor_open = 0;
     for (vendor in vendor_data){
-      vendor_open = event.feature.getProperty(vendor);
+      if (fulfillment_type in feature_stats){
+        if (vendor in feature_stats[fulfillment_type]){
+          vendor_open = feature_stats[fulfillment_type][vendor]
+        }
+      }
+
       table_row = document.createElement("tr")
       table_cell = document.createElement("td")
       table_cell.innerHTML = vendor_data[vendor]['vendor_name']
       table_row.appendChild(table_cell)
       table_cell = document.createElement("td")
-      table_cell.innerHTML = vendor_open = event.feature.getProperty(vendor).toLocaleString()
+      table_cell.innerHTML = vendor_open.toLocaleString()
       table_row.style.color = vendor_data[vendor]['vendor_colour']
       table_row.appendChild(table_cell)
       table.appendChild(table_row)

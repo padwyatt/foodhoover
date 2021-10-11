@@ -22,11 +22,11 @@ def get_sql_client(database_name):
     db_pass = secrets['db_password']
     db_name = database_name
 
-    if os.getenv('GAE_ENV', '').startswith('standard'):
-        # Production in the standard environment
-        db_socket_dir = "/cloudsql"
+    #if os.getenv('GAE_ENV', '').startswith('standard') or os.getenv('GAE_INSTANCE'):
+    if os.getenv('PORT') == "8080":
+        db_socket_dir = os.environ.get("DB_SOCKET_DIR", "/cloudsql")
         cloud_sql_connection_name = "rooscrape:europe-west2:foodhoover-web"
-        
+
         pool = sqlalchemy.create_engine(
             sqlalchemy.engine.url.URL(
                 drivername="postgresql+psycopg2",
