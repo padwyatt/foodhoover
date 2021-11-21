@@ -1,0 +1,42 @@
+<html>
+    <head>
+        <title>FoodHoover - Status</title>
+        <meta name="viewport" content="initial-scale=1.0">
+        <meta charset="utf-8">
+
+        <style>
+            .styled-table {
+                border-spacing: 2px;
+                border-collapse: separate;
+                font-size: clamp(10px, 2vmin, 18px);
+                width: 100%;
+                text-align: center;
+            }
+        </style>
+    </head>
+    <body>
+        <h1> Scrape Status</h1>
+        <table class="styled-table">  
+            <tr>
+                <th>Vendor</th>
+                <th>All time</th>
+                <th>Live</th>
+                <th>New</th>
+                <th>New with metadata</th>
+                <th>New with places data</th>
+                <th>Status</th>
+            </tr>
+            {% for row in status_data %}
+            <tr>
+                {% for key, value in row.items() %}
+                    {%if key=='status'%}
+                    <td><span style="color:{%if value==0%}red{%elif value==1%}orange{%else%}green{%endif%}" >⬤</span></td>
+                    {%else%}
+                    <td> {{ value }} </td>
+                    {%endif%}
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+</html>

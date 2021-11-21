@@ -15,7 +15,6 @@ def get_sql_client(database_name):
     
     f = open('secrets.json')
     secrets = json.load(f)
-    print(secrets)
     
     db_user = secrets['db_user']
     db_pass = secrets['db_password']

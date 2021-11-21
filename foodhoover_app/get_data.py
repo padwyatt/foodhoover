@@ -3,7 +3,9 @@ from sqlalchemy.sql.expression import true
 from connections import get_sql_client, get_bq_client
 from google.cloud import bigquery
 import json
-from datetime import timedelta
+from datetime import date, timedelta
+import io
+import csv
 
 
 def get_country_fulfillment_data(start, end, lngw, lats, lnge, lngn, granularity):
@@ -57,7 +59,7 @@ def get_country_fulfillment_data(start, end, lngw, lats, lnge, lngn, granularity
                     jsonb_build_object(
                         'type',       'Feature',
                         'id',         sectors.sector,
-                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(MAX(sectors.geometry),0.001)),3))::jsonb,,
+                        'geometry',   ST_AsGeoJSON(ST_CollectionExtract(ST_ForcePolygonCW(ST_Simplify(MAX(sectors.geometry),0.0001)),3))::jsonb,
                         'properties', to_jsonb(
                             jsonb_build_object(
                                 'postcode_name', sectors.sector,
@@ -435,7 +437,7 @@ def get_delivery_boundary(start, end, place_ids, last_update):
                     RIGHT JOIN rooscrape.foodhoover_store.places places on places.place_id = bysector.place_id\
                     WHERE places.place_id IN UNNEST(@place_ids)\
                     GROUP BY places.place_id, bysector.vendor\
-                ) agg_rx_cx\
+                ) agg_delivery_zone\
             ) as places\
             GROUP BY places.place_id\
         ) final\
@@ -647,40 +649,41 @@ def get_chains_boundary(chain, start, end, last_update):
                 FROM distinct_zones, UNNEST(rx_included) as rx_list
                 GROUP BY vendor)
                 u ON w.vendor=u.vendor 
-            WHERE w.vendor is NOT NULL
+            WHERE w.vendor is NOT NULL and delivery_area IS NOT NULL
             GROUP BY vendor
     """
 
-    sql = text("\
-        SELECT\
-            pop_stats.vendor,\
-            pop_stats.delivery_population,\
-            results.rx_num as rx_num,\
-            ST_ASGEOJSON(results.delivery_area) as delivery_area\
-            FROM (\
-                SELECT\
-                    vendor,\
-                    sum(sectors.population) as delivery_population\
-                FROM (\
-                    SELECT\
-                        vendor,\
-                        UNNEST(sectors_covered) as inc_sector\
-                    FROM agg_delivery_zone\
-                    where UPPER(place_name) LIKE UPPER(:chain)\
-                    GROUP BY vendor, UNNEST(sectors_covered)\
-                    ) sectors_covered\
-                LEFT JOIN sectors on sectors.sector=sectors_covered.inc_sector\
-                GROUP by sectors_covered.vendor\
-                ) pop_stats\
-        LEFT JOIN\
-            (SELECT\
-                vendor,\
-                ST_SIMPLIFY(ST_UNION(ST_CollectionExtract(ST_MAKEVALID(delivery_zone),3)),0.001) as delivery_area,\
-                COUNT(DISTINCT place_id) as rx_num\
-            FROM agg_rx_cx\
-            WHERE UPPER(place_name) LIKE UPPER(:chain)\
-            GROUP BY vendor) results ON results.vendor=pop_stats.vendor\
-        ")
+    sql = text("""
+        SELECT
+            pop_stats.vendor,
+            pop_stats.delivery_population,
+            results.rx_num as rx_num,
+            ST_ASGEOJSON(results.delivery_area) as delivery_area
+            FROM (
+                SELECT
+                    vendor,
+                    sum(sectors.population) as delivery_population
+                FROM (
+                    SELECT
+                        vendor,
+                        UNNEST(sectors_covered) as inc_sector
+                    FROM agg_delivery_zone
+                    where UPPER(place_name) LIKE UPPER(:chain)
+                    GROUP BY vendor, UNNEST(sectors_covered)
+                    ) sectors_covered
+                LEFT JOIN sectors on sectors.sector=sectors_covered.inc_sector
+                GROUP by sectors_covered.vendor
+                ) pop_stats
+        LEFT JOIN
+            (SELECT
+                vendor,
+                ST_SIMPLIFY(ST_UNION(ST_CollectionExtract(ST_MAKEVALID(delivery_zone),3)),0.001) as delivery_area,
+                COUNT(DISTINCT place_id) as rx_num
+            FROM agg_delivery_zone
+            WHERE UPPER(place_name) LIKE UPPER(:chain)
+            GROUP BY vendor) results ON results.vendor=pop_stats.vendor
+        WHERE delivery_area IS NOT NULL
+        """)
 
     max_cache = last_update
     min_cache = max_cache - timedelta(days=14)
@@ -690,6 +693,7 @@ def get_chains_boundary(chain, start, end, last_update):
     if ((min_cache == start) & (max_cache== end)):
         engine = get_sql_client('foodhoover_cache')
         conn = engine.connect()
+        print(chain)
         result = conn.execute(sql, chain="%"+chain.replace(" ","%")+"%")
 
     else:
@@ -749,3 +753,75 @@ def get_last_update():
     result = conn.execute(sql)
 
     return result.fetchone()
+
+def get_download(start, end):
+
+    sql = """
+    SELECT 
+        places.place_id, 
+        MAX(place_name) as place_name, 
+        MAX(place_sector) as postcode_sector,
+        MIN(first_seen_live) as first_seen,
+        CASE WHEN 'ROO' IN UNNEST(ARRAY_AGG(vendor)) THEN true ELSE false END as Deliveroo,
+        CASE WHEN 'UE' IN UNNEST(ARRAY_AGG(vendor)) THEN true ELSE false END as UberEats,
+        CASE WHEN 'JE' IN UNNEST(ARRAY_AGG(vendor)) THEN true ELSE false END as JustEat,
+        CASE WHEN 'FH' IN UNNEST(ARRAY_AGG(vendor)) THEN true ELSE false END as FoodHub,
+    FROM rooscrape.foodhoover_store.rx_ref 
+    LEFT JOIN rooscrape.foodhoover_store.places ON places.place_id=rx_ref.place_id
+    WHERE process_date=@end AND EXTRACT(DATE FROM last_seen_live)>=@start
+    group by places.place_id
+    """
+    client = get_bq_client()
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("end", "DATE",end),
+            bigquery.ScalarQueryParameter("start", "DATE",start),   
+        ]
+    )
+
+    query_job = client.query(sql, job_config=job_config)
+
+    add_header = True
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC)
+    for row in query_job.result():
+        if add_header:
+            header = list(dict(row).keys())
+            writer.writerow(header)
+            add_header = False
+        row = [str(value) for value in row]
+        writer.writerow(row)
+
+    return output.getvalue()
+
+
+def get_status(last_update):
+
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    day_to_check = max(last_update, yesterday).strftime('%Y-%m-%d')
+
+    sql = text("""
+        SELECT 
+            status.*, 
+            CASE WHEN live_rx>10000 AND new_rx_with_metadata>0 AND new_rx_with_google_place_id>0 THEN 2 ELSE CASE WHEN live_rx>10000 THEN 1 ELSE 0 END END as status
+        FROM (
+            SELECT 
+                vendor, 
+                count(1) as all_rx,
+                SUM(CASE WHEN last_seen_live>=:day_to_check THEN 1 ELSE 0 END) as live_rx, 
+                SUM(CASE WHEN first_seen_live>=:day_to_check THEN 1 ELSE 0 END) as new_rx,
+                SUM(CASE WHEN first_seen_live>=:day_to_check and rx_sector is not null THEN 1 ELSE 0 END) as new_rx_with_metadata,
+                SUM(CASE WHEN first_seen_live>=:day_to_check and google_place_id is not null THEN 1 ELSE 0 END) as new_rx_with_google_place_id
+            FROM rx_ref
+            group by vendor
+        ) status
+    """)
+
+    engine = get_sql_client('foodhoover_cache')
+    conn = engine.connect()
+    result = conn.execute(sql, day_to_check=day_to_check)
+
+    return  [{'vendor':r['vendor'], 'all_rx': r['all_rx'],'live_rx': r['live_rx'],'new_rx': r['new_rx'],'new_rx_with_metadata': r['new_rx_with_metadata'],'new_rx_with_google_place_id': r['new_rx_with_google_place_id'], 'status':r['status']} for r in result]
+

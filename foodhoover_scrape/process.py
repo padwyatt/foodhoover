@@ -1,7 +1,7 @@
 import time
 import urllib
 import json
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime,  date
 
 import asyncio
 from aiohttp import ClientSession
@@ -11,6 +11,10 @@ from flask import jsonify
 from connections import get_sql_client, get_bq_client, get_bq_storage, get_api_client, get_gcs_client
 
 from google.cloud import bigquery
+
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 async def url_batch(fetch_datas, fetch_function, batch_size):
 
@@ -39,7 +43,7 @@ async def url_batch(fetch_datas, fetch_function, batch_size):
 def t_post_process(steps, process_date):
     results = []
     if steps == ['ALL']:
-        steps = ['INSERT','UPDATE-ROO','UPDATE-UE', 'UPDATE-JE-FH','MISSING-POSTCODES','UPDATE-GEOS','GET-PLACES','PROC-PLACES','CREATE-PLACES','AGG-RX-CX-SECTOR','AGG-RESULTS-COUNTRY-FULFILLMENT','AGG-RESULTS-DISTRICT-FULFILLMENT','AGG-RESULTS-SECTOR-FULFILLMENT','AGG-DELIVERY-ZONE','EXPORT-RX-REF','EXPORT-PLACES','EXPORT-AGG-DELIVERY-ZONE','EXPORT-AGG-COUNTRY-FULFILLMENT-DAY','EXPORT-AGG-DISTRICT-FULFILLMENT-DAY','EXPORT-AGG-SECTOR-FULFILLMENT-DAY']
+        steps = ['INSERT','UPDATE-ROO','UPDATE-UE', 'UPDATE-JE-FH','MISSING-POSTCODES','UPDATE-GEOS','GET-PLACES','PROC-PLACES','CREATE-PLACES','AGG-RX-CX-SECTOR','AGG-RESULTS-COUNTRY-FULFILLMENT','AGG-RESULTS-DISTRICT-FULFILLMENT','AGG-RESULTS-SECTOR-FULFILLMENT','AGG-DELIVERY-ZONE','EXPORT-RX-REF','EXPORT-PLACES','EXPORT-AGG-DELIVERY-ZONE','EXPORT-AGG-COUNTRY-FULFILLMENT-DAY','EXPORT-AGG-DISTRICT-FULFILLMENT-DAY','EXPORT-AGG-SECTOR-FULFILLMENT-DAY','STATUS-MAIL']
 
     for step in steps:
         if step == 'INSERT':
@@ -120,6 +124,10 @@ def t_post_process(steps, process_date):
             yield result
         elif step == 'EXPORT-AGG-SECTOR-FULFILLMENT-DAY':
             result = step+": "+str(t_export_agg_sector_fulfillment_day(process_date))
+            results.append(result)
+            yield result
+        elif step == 'STATUS-MAIL':
+            result = step+": "+str(mail(process_date))
             results.append(result)
             yield result
         else:
@@ -210,8 +218,8 @@ def t_update_missing_postcodes(process_date):
         MERGE "+table_id+" ref \
         USING \
         (SELECT a.rx_uid, string_agg(b.postcode ORDER BY ST_DISTANCE(a.rx_point, b.postcode_point) ASC LIMIT 1) as closest_postcode \
-        FROM (SELECT rx_uid, ST_GEOGPOINT(rx_lng,rx_lat) as rx_point from rooscrape.foodhoover_store.rx_ref\
-        WHERE rx_postcode IS null AND (rx_lat IS NOT null AND rx_lng is NOT null)) a, rooscrape.foodhoover_store.postcode_lookup b \
+        FROM (SELECT rx_uid, ST_GEOGPOINT(rx_lng,rx_lat) as rx_point from rooscrape.foodhoover_store.rx_ref \
+        WHERE process_date=@process_date AND rx_postcode IS null AND (rx_lat IS NOT null AND rx_lng is NOT null)) a, rooscrape.foodhoover_store.postcode_lookup b \
         WHERE ST_DISTANCE(a.rx_point, b.postcode_point)<5000 \
         GROUP BY a.rx_uid) locations \
         ON locations.rx_uid=ref.rx_uid AND process_date=@process_date  \
@@ -955,7 +963,7 @@ def t_agg_results_district_fulfillment(process_date):
                 SELECT scrape_date, geo.postcode_district, scrape.vendor, ref.rx_fulfillment_type, count(distinct scrape.rx_uid) as rx_num 
                 FROM rooscrape.foodhoover_store.rx_cx_sector scrape, UNNEST(sectors_seen) as sector
                 LEFT JOIN rooscrape.foodhoover_store.geo_mappings geo on geo.postcode_sector=sector
-                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid=scrape.rx_uid
+                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid=scrape.rx_uid AND ref.process_date=scrape.scrape_date
                 WHERE ref.rx_fulfillment_type is not null """+"AND"+where_clause+"""
                 GROUP BY scrape_date, geo.postcode_district, scrape.vendor, ref.rx_fulfillment_type
                 UNION ALL
@@ -1014,7 +1022,7 @@ def t_agg_results_sector_fulfillment(process_date):
                 SELECT scrape_date, geo.postcode_sector, scrape.vendor, ref.rx_fulfillment_type, count(distinct scrape.rx_uid) as rx_num 
                 FROM rooscrape.foodhoover_store.rx_cx_sector scrape, UNNEST(sectors_seen) as sector
                 LEFT JOIN rooscrape.foodhoover_store.geo_mappings geo on geo.postcode_sector=sector
-                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid=scrape.rx_uid
+                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid=scrape.rx_uid AND ref.process_date=scrape.scrape_date
                 WHERE ref.rx_fulfillment_type is not null """+"AND"+where_clause+"""
                 GROUP BY scrape_date, geo.postcode_sector, scrape.vendor, ref.rx_fulfillment_type
                 UNION ALL
@@ -1083,7 +1091,7 @@ def t_agg_results_country_fulfillment(process_date):
                     array_agg(distinct CASE WHEN ref.rx_fulfillment_type='restaurant' THEN sector ELSE null END) as sectors_seen_restaurant
                 FROM rooscrape.foodhoover_store.rx_cx_sector scrape, UNNEST(sectors_seen) as sector
                 LEFT JOIN rooscrape.foodhoover_store.geo_mappings geo on geo.postcode_sector=sector
-                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid=scrape.rx_uid
+                LEFT JOIN rooscrape.foodhoover_store.rx_ref ref on ref.rx_uid=scrape.rx_uid and ref.process_date=scrape.scrape_date
                 """+where_clause+"""
                 GROUP BY scrape_date, vendor
                 ) 
@@ -1351,8 +1359,8 @@ def t_export_rx_ref(process_date):
     try:
         bq_table = 'rooscrape.foodhoover_store.rx_ref'
         sql_table = 'rx_ref'
-        sql_schema = ['rx_uid','rx_slug','vendor','rx_name','rx_postcode','rx_district','rx_sector', 'rx_lat', 'rx_lng','rx_menu','place_id']
-        bq_select_sql = "SELECT rx_uid, rx_slug, vendor, rx_name, rx_postcode, rx_district, rx_sector, rx_lat, rx_lng, rx_menu, place_id FROM foodhoover_store.rx_ref WHERE process_date='"+process_date+"'"
+        sql_schema = ['rx_uid','rx_id','rx_slug','vendor','rx_name','rx_postcode','rx_district','rx_sector','rx_lat','rx_lng','rx_fulfillment_type','rx_sponsored','rx_menu','google_place_id','place_id','last_seen_live','first_seen_live','update_time','places_update']
+        bq_select_sql = "SELECT rx_uid, rx_id, rx_slug, vendor, rx_name, rx_postcode, rx_district, rx_sector, rx_lat, rx_lng, rx_fulfillment_type,rx_sponsored,rx_menu,google_place_id,place_id,last_seen_live,first_seen_live,update_time,places_update FROM foodhoover_store.rx_ref WHERE process_date='"+process_date+"'"
         write_mode = 'overwrite'
         sql_create_statement = "table_schemas/rx_ref"
 
@@ -1468,3 +1476,72 @@ def t_export_agg_delivery_zone(process_date):
     except Exception as e:
         t_step_logger(process_date, 'EXPORT-AGG-DELIVERY-ZONE', 'FAIL', str(e))
         return e
+
+def mail(process_date):
+    status_data = get_status(process_date)
+    status_code = min([r['status'] for r in status_data])
+    
+    if status_code == 2:
+        status_text = 'OK'
+    else:
+        status_text = 'NOT OK!'
+
+    header = "<table><tr><th>Vendor</th><th>All Rx</th><th>Live Rx</th><th>New Rx</th><th>Rx with MetaData</th><th>Rx with Places</th><th>Status</th></tr>"
+    data = "".join(["<tr>"+"".join(["<td>"+str(value)+"</td>" for key, value in row.items()])+"</tr>" for row in status_data])
+    table_html =  "<html>" + header + data + "</table></html>"
+    html = MIMEText(table_html, 'html')
+
+    f = open('secrets.json')
+    secrets = json.load(f)
+    gmail_user = secrets['gmail_user']
+    gmail_password = secrets['gmail_password']
+    sent_to = 'padwyatt@yahoo.com'
+
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = 'FoodHoover: '+ status_text
+    msg['From'] = gmail_user
+    msg['To'] = sent_to
+    msg.attach(html)
+
+    try:
+        smtp_server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        smtp_server.ehlo()
+        smtp_server.login(gmail_user, gmail_password)
+        smtp_server.sendmail(gmail_user, [sent_to], msg.as_string())
+        smtp_server.close()
+        return "Mail Sent"
+    except Exception as ex:
+        return "Mail Not Sent"
+
+def get_status(process_date):
+
+    client = get_bq_client()
+
+    sql = """
+        SELECT 
+            status.*, 
+            CASE WHEN live_rx>10000 AND new_rx_with_metadata>0 AND new_rx_with_google_place_id>0 THEN 2 ELSE CASE WHEN live_rx>10000 THEN 1 ELSE 0 END END as status
+        FROM (
+            SELECT 
+                vendor, 
+                count(1) as all_rx,
+                SUM(CASE WHEN EXTRACT(DATE FROM last_seen_live)>=@day_to_check THEN 1 ELSE 0 END) as live_rx, 
+                SUM(CASE WHEN EXTRACT(DATE FROM first_seen_live)>=@day_to_check THEN 1 ELSE 0 END) as new_rx,
+                SUM(CASE WHEN EXTRACT(DATE FROM first_seen_live)>=@day_to_check and rx_sector is not null THEN 1 ELSE 0 END) as new_rx_with_metadata,
+                SUM(CASE WHEN EXTRACT(DATE FROM first_seen_live)>=@day_to_check and google_place_id is not null THEN 1 ELSE 0 END) as new_rx_with_google_place_id
+            FROM rooscrape.foodhoover_store.rx_ref
+            WHERE process_date = @day_to_check
+            group by vendor
+        ) status
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("day_to_check", "DATE", process_date),
+        ]
+    )
+
+    query_job = client.query(sql, job_config=job_config)  # API request
+    result = query_job.result()
+
+    return  [{'vendor':r['vendor'], 'all_rx': r['all_rx'],'live_rx': r['live_rx'],'new_rx': r['new_rx'],'new_rx_with_metadata': r['new_rx_with_metadata'],'new_rx_with_google_place_id': r['new_rx_with_google_place_id'], 'status':r['status']} for r in result]

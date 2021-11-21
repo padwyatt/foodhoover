@@ -1,6 +1,6 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from datetime import timedelta
-from get_data import get_country_data, get_country_fulfillment_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_last_update, get_chains_boundary, get_places_in_area
+from get_data import get_country_fulfillment_data, get_restaurant_details, get_rx_names, get_geo_objects, get_delivery_boundary, get_last_update, get_chains_boundary, get_places_in_area, get_download, get_status
 import json
 import uuid
 
@@ -19,13 +19,17 @@ def init():
     first_update, last_update = get_last_update()
     start = (last_update - timedelta(14)).strftime('%Y-%m-%d')
     end = last_update.strftime('%Y-%m-%d')
-    return start, end, first_update, last_update, map_secret
+
+    status_data = get_status(last_update)
+    status = min([r['status'] for r in status_data])
+
+    return start, end, first_update, last_update, map_secret, status
 
 @app.route('/aggregator')
 @app.route('/')
 #@app.errorhandler(404)
 def country_view():
-    start, end, first_update, last_update, map_secret = init()
+    start, end, first_update, last_update, map_secret, status = init()
     if 'start' in request.args:
         start = request.args.get('start')
     if 'end' in request.args:
@@ -40,11 +44,11 @@ def country_view():
         vendor ='ROO'
 
     tab_name = 'country'
-    return render_template('index.html', place_details=None, chain=None, tab_name = tab_name, start=start, end=end, delivery=delivery, vendor=vendor, map_secret=map_secret, first_update=first_update, last_update=last_update)
+    return render_template('index.html', place_details=None, chain=None, tab_name = tab_name, start=start, end=end, delivery=delivery, vendor=vendor, map_secret=map_secret, first_update=first_update, last_update=last_update, status=status)
 
 @app.route('/restaurant')
 def restaurant_view():
-    start, end, first_update, last_update, map_secret = init()
+    start, end, first_update, last_update, map_secret, status = init()
     if 'start' in request.args:
         start = request.args.get('start')
     if 'end' in request.args:
@@ -56,7 +60,7 @@ def restaurant_view():
 
 @app.route('/chain')
 def chain_view():
-    start, end, first_update, last_update, map_secret = init()
+    start, end, first_update, last_update, map_secret, status = init()
     if 'start' in request.args:
         start = request.args.get('start')
     if 'end' in request.args:
@@ -137,7 +141,26 @@ def flash_get():
         return app.response_class(to_sync_generator(flash_url_batch(flash_prep['fetch_datas'], flash_prep['rx_uids'], scrape_fetch_function, 30, flash_prep['postcodes_to_scrape'], run_id)), mimetype='text/event-stream')
     else:
         return flash_prep
-    
+
+@app.route('/download', methods=['GET'])
+def download():
+    start = request.args.get('start')
+    end = request.args.get('end')
+
+    result = get_download(start, end)
+
+    return Response(
+        result,
+        mimetype="text/csv",
+        headers={"Content-disposition":"attachment; filename=restaurants.csv"})
+
+@app.route('/status')
+def status():
+    first_update, last_update = get_last_update()
+    status_data = get_status(last_update)
+
+    return render_template('status.html',status_data=status_data)
+
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080, debug=True)
 

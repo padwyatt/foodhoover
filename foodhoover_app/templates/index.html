@@ -116,6 +116,17 @@
         }
 
         /*Country map legend */
+        #download{
+            height: 34px;
+            width: 34px;
+            margin-left: 15px;
+            float:left;
+            opacity: 0.2;
+        }
+        #download:hover {
+            opacity: 0.9;
+        }
+
         .cbox {
             font-size: 0.75vh;
             font-weight: bold;
@@ -126,7 +137,6 @@
             opacity: 0.8;
         }
         #legend {
-            font-family: Arial, sans-serif;
             background: #fff;
             padding: 10px;
             margin: 10px;
@@ -270,6 +280,7 @@
                     <i class="fa fa-calendar"></i>&nbsp;
                     <span></span> <i class="fa fa-caret-down"></i>
                 </div>
+                <img src="{{ url_for('static', filename= 'images/download.png') }}" id='download' alt = 'Download Data' title="Download Data" onclick="download();">
             </div>
         </div>
         <div id='country_map' class='map'></div>
@@ -293,7 +304,9 @@
 
     <div class='footer'>
         <span style='float:left'> <a href='https://github.com/padwyatt/foodhoover'>About Foodhoover</a></span>
-        <span style='float:right'> Last full update: {{last_update.strftime('%Y-%m-%d')}}</span> 
+        <span style='float:right'> Last full update: {{last_update.strftime('%Y-%m-%d')}} 
+            <a style="color:{%if status==0%}red{%elif status==1%}orange{%else%}green{%endif%}" href='/status'>⬤</a>
+        </span> 
     </div>
 
     <div id="loading" class='loading' style = "display: none; background-image: url({{ url_for('static', filename= 'images/loading.gif') }});"></div>
@@ -444,7 +457,39 @@
     if (event.keyCode === 13) {
         $("#chains_search").click();
     }
-});
+    });
+
+    //download list of restauants
+    function download() {
+        setVisible('#loading', true);
+        
+        $.ajax({
+            async: true,
+            type: "GET",
+            url: "/download?start="+start.format('YYYY-MM-DD')+"&end="+end.format('YYYY-MM-DD'),
+            success: function (response) {
+                setVisible('#loading', false);
+                DownloadCsv(response, "download-"+start.format('YYYY-MM-DD')+"-"+end.format('YYYY-MM-DD')+".csv")
+            },
+            error: function (request, status, error) {
+                alert(request.responseText);
+                setVisible('#loading', false);}
+        });
+    }
+
+    const DownloadCsv = (function() {
+        const a = document.createElement("a");
+        document.body.appendChild(a);
+        a.style = "display: none";
+        return function(data, fileName) {
+            const blob = new Blob([data], {type: "octet/stream"}),
+            url = window.URL.createObjectURL(blob);
+            a.href = url;
+            a.download = fileName;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        };
+    }());
    
 </script>
 <script async defer src="https://maps.googleapis.com/maps/api/js?key={{map_secret}}&callback=loadTab"></script>
