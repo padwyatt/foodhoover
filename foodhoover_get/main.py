@@ -126,7 +126,7 @@ async def get_ue(data):
         'user-agent': 'Mozilla/5.0 (X11; CrOS x86_64 13505.111.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.152 Safari/537.36',
         'x-csrf-token': 'x'
     }
-    post = {
+    post_page = {
         'billboardUuid': '',
         'carouselId': '',
         'date': '',
@@ -140,6 +140,19 @@ async def get_ue(data):
         'userQuery': ''
     }
 
+    post_init = {
+        'billboardUuid': '',
+        'carouselId': '',
+        'date': '',
+        'endTime': 0,
+        'feedProvider': '',
+        'feedSessionCount': {'announcementCount': 0, 'announcementLabel': ''},
+        'marketingFeedType': '',
+        'showSearchNoAddress': 'false',
+        'startTime': 0,
+        'userQuery': ''
+    }
+
     def parse_ue(response):
         open_set = []
         try:
@@ -147,12 +160,17 @@ async def get_ue(data):
             
             for restaurant in restaurants:
                 try: ##attempt to get fee and eta data
-                    eta_min =  re.search('(\d*)\–?(\d*)', restaurant['store']['meta2'][0]['text']).group(1) 
-                    eta_max = re.search('(\d*)\–?(\d*)', restaurant['store']['meta2'][0]['text']).group(2) 
+                    eta_min =  re.search('(\d*)\–?(\d*)', restaurant['store']['meta'][1]['text']).group(1) 
+                    eta_max = re.search('(\d*)\–?(\d*)', restaurant['store']['meta'][1]['text']).group(2) 
                     eta = (int(eta_min)+int(eta_max))/2
                 except Exception as e:   
-                    print("Error - could not parse ETA" + str(e))  
-                    eta = None        
+                    try:
+                        eta_min =  re.search('(\d*)\–?(\d*)', restaurant['store']['meta2'][0]['text']).group(1) 
+                        eta_max = re.search('(\d*)\–?(\d*)', restaurant['store']['meta2'][0]['text']).group(2) 
+                        eta = (int(eta_min)+int(eta_max))/2
+                    except Exception as e: 
+                        print("Error - could not parse ETA" + str(e))  
+                        eta = None        
                 try:     
                     fee = re.search('\d+\.?\d+', restaurant['store']['meta'][0]['text']).group(0) 
                 except Exception as e:  
@@ -183,10 +201,40 @@ async def get_ue(data):
 
     async with ClientSession() as session:
         try:
-            async with session.post(url,json=post, headers=header) as response:
+            async with session.post(url,json=post_init, headers=header) as response:
                 response = await response.json()
                 payload_size = len(json.dumps(response))
                 open_set, status = parse_ue(response)
+
+                try:
+                    print(response['data']['meta']['hasMore'])
+                    if response['data']['meta']['hasMore']==True:
+
+                        offset = response['data']['meta']['offset']
+                        print(offset)
+
+                        post_page = {
+                            'billboardUuid': '',
+                            'carouselId': '',
+                            'date': '',
+                            'endTime': 0,
+                            'feedProvider': '',
+                            'feedSessionCount': {'announcementCount': 9, 'announcementLabel': 'subscription.analytics_label'},
+                            'marketingFeedType': '',
+                            'pageInfo': {'offset': offset, 'pageSize': 2000},
+                            'showSearchNoAddress': 'false',
+                            'startTime': 0,
+                            'userQuery': ''
+                        }
+                        async with session.post(url,json=post_page, headers=header) as response:
+                            response = await response.json()
+                            payload_size = len(json.dumps(response))
+                            open_set_next, status = parse_ue(response)
+                            open_set = open_set + open_set_next
+
+                except Exception as e:
+                    status = "Next page error: " + str(e)
+
         except Exception as e:
             status = 'Fetch error: '+str(e)
             payload_size = 0

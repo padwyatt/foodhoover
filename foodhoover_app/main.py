@@ -56,7 +56,7 @@ def restaurant_view():
     place_ids = request.args.getlist('place_id')
     place_details = get_restaurant_details(place_ids)
     tab_name = 'resto'
-    return render_template('index.html', place_details=place_details, chain=None, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
+    return render_template('index.html', place_details=place_details, chain=None, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update, status=status)
 
 @app.route('/chain')
 def chain_view():
@@ -68,7 +68,7 @@ def chain_view():
     chain = request.args.get('chain')
     tab_name = 'chains'
     print(chain)
-    return render_template('index.html', place_details=None, chain=chain, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update)
+    return render_template('index.html', place_details=None, chain=chain, tab_name = tab_name, start=start, end=end, map_secret=map_secret, first_update=first_update, last_update=last_update, status=status)
 
 @app.route('/country.json')
 def country_data():

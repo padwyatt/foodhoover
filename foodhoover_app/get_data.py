@@ -649,7 +649,7 @@ def get_chains_boundary(chain, start, end, last_update):
                 FROM distinct_zones, UNNEST(rx_included) as rx_list
                 GROUP BY vendor)
                 u ON w.vendor=u.vendor 
-            WHERE w.vendor is NOT NULL and delivery_area IS NOT NULL
+            WHERE w.vendor is NOT NULL
             GROUP BY vendor
     """
 

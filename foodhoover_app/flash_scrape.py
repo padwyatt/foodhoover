@@ -6,6 +6,7 @@ import asyncio
 from aiohttp import ClientSession
 from google.cloud import bigquery
 from sqlalchemy.sql import text
+import gzip
 
 def prepare_flash_scrape(bounds, place_ids):
     ##get the sectors in bounds
@@ -108,7 +109,7 @@ async def scrape_fetch_function(fetch_data, run_id):
             try:
                 async with session.get(uri) as response:
                     response = await response.read()
-                    results = json.loads(response.decode('utf8'))
+                    results = json.loads(gzip.decompress(response).decode('utf8'))
                     return results
             except Exception as e:
                 results = [{
@@ -147,13 +148,13 @@ async def flash_url_batch(fetch_datas, rx_uids, fetch_function, batch_size, post
     postcodes_scraped = set()
     for done_task in asyncio.as_completed(tasks):
         scrape_results =  await done_task
-
+        print(scrape_results)
         for status in scrape_results['scrape_status']:
             scrape_status.append(status)
             postcodes_scraped.add(status['cx_postcode'])
         for rx in scrape_results['open_set']:
             open_set.append(rx)
-            rx_uid = (rx['rx_slug']+'-'+rx['vendor'])
+            rx_uid = rx['rx_uid']
             if  rx_uid in rx_uids:
                 postcode_set = set(output_postcodes[rx_uid])
                 postcode_set.add(rx['cx_postcode'])
@@ -258,7 +259,7 @@ def query_flash(json):
             LEFT JOIN postcode_lookup pc on pc.postcode=scrape.postcode_seen\
             LEFT JOIN sectors on sectors.sector = pc.postcode_sector\
             LEFT JOIN rx_ref on rx_ref.rx_uid = scrape.rx_uid\
-            LEFT JOIN places on places.place_id = rx_ref.hoover_place_id\
+            LEFT JOIN places on places.place_id = rx_ref.place_id\
             GROUP BY places.place_id, place_vendor_id) final\
         GROUP BY final.place_id\
     ")
